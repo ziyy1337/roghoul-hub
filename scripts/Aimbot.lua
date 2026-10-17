@@ -1,50 +1,65 @@
---// Ro-Ghoul aim: silent (camera Mouse.Hit) + sticky target + prediction
--- Game attacks use MH() = Mouse.Hit (where the CAMERA looks), not character facing.
+--// Ro-Ghoul aim
+-- Silent: spoof PlayerMouse.Hit (game MH() = camera ray). Ping-based prediction.
+-- Dual FOV: separate cones for silent + camera; lock only inside the active FOV.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local Stats = game:GetService("Stats")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
+local PlayerMouse = nil
+
+local function getMouse()
+	if PlayerMouse and PlayerMouse.Parent ~= nil then
+		return PlayerMouse
+	end
+	PlayerMouse = LocalPlayer:GetMouse()
+	return PlayerMouse
+end
 
 local Aim = {
-	Enabled = false, -- starts OFF — waits for you
+	Enabled = false, -- waits for you
 	SilentAim = false,
 	CameraAim = false,
 	TeamCheck = false,
 	WallCheck = false,
 
-	FOV = 180, -- full cone degrees
+	-- separate FOV cones (degrees)
+	SilentFOV = 180,  -- silent lock cone
+	CameraFOV = 90,   -- camera-lock cone
+	-- legacy alias kept for UI that still sets Aim.FOV
+	FOV = 180,
+
+	StickyAim = true,
+	StickMulti = 1.6,
 	Smoothness = 0.45,
 	Bone = "Head",
 	Target = nil,
 
-	-- sticky: stay on the same target until it dies / leaves stick FOV
-	StickyAim = true,
-	StickFOVMultiplier = 1.6, -- lose lock when angle > FOV/2 * multiplier
+	-- prediction from live ping
+	PredictionMode = "Auto", -- Off | Auto | Manual
+	PredictionManual = 0.05, -- extra seconds on top of ping (Manual)
+	PredictionAutoScale = 1.0, -- multiply live ping (Auto)
+	PingMs = 0,
 
-	-- prediction (seconds of lead on target velocity)
-	PredictionMode = "Auto", -- "Off" | "Auto" | "Manual"
-	PredictionManual = 0.15, -- seconds when Manual
-	PredictionSpeed = 350,   -- studs/s used by Auto (dist/speed = lead time)
-	PredictionYBoost = 0,    -- extra vertical offset
-
-	-- indicators
-	ShowFov = true,
-	FovColor = Color3.fromRGB(255, 80, 80),
+	-- indicators (always on screen when their feature is active)
+	ShowSilentFov = true,
+	SilentFovColor = Color3.fromRGB(255, 80, 80),
+	ShowCameraFov = true,
+	CameraFovColor = Color3.fromRGB(80, 160, 255),
 	FovThickness = 1.5,
 	ShowTargetLine = true,
 	LineColor = Color3.fromRGB(80, 160, 255),
 	LineThickness = 1.5,
 	DotColor = Color3.fromRGB(80, 160, 255),
 
-	-- camera FOV changer
+	-- camera FieldOfView changer (not the aim cone)
 	UseCameraFov = false,
-	CameraFov = 70,
+	CameraFieldOfView = 70,
 
-	-- keybind (menu does NOT touch aim)
 	AimKey = Enum.KeyCode.MouseBackButton,
 	AimKeyMode = "Toggle",
 	AimKeyActive = false,
@@ -75,9 +90,7 @@ local function sameTeam(plr)
 		local t = theirs:FindFirstChild("Customization")
 		m = m and m:FindFirstChild("Team")
 		t = t and t:FindFirstChild("Team")
-		if m and t then
-			return m.Value == t.Value
-		end
+		if m and t then return m.Value == t.Value end
 	end
 	return false
 end
@@ -101,69 +114,106 @@ local function angleToTarget(part)
 	return math.deg(math.acos(math.clamp(look:Dot(to.Unit), -1, 1)))
 end
 
--- lead target position by velocity
-function Aim.GetPredictedPosition(part)
-	if not part then return nil end
-	local mode = Aim.PredictionMode
-	if mode == "Off" then
-		return part.Position
+local function refreshPing()
+	local ok, v = pcall(function()
+		return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+	end)
+	if ok and type(v) == "number" and v == v and v >= 0 then
+		Aim.PingMs = v
 	end
-	local vel = part.AssemblyLinearVelocity or Vector3.zero
-	local t = 0
-	if mode == "Manual" then
-		t = math.clamp(Aim.PredictionManual, 0, 1.5)
-	else -- Auto
-		local dist = (part.Position - Camera.CFrame.Position).Magnitude
-		local speed = math.max(Aim.PredictionSpeed, 50)
-		t = math.clamp(dist / speed, 0, 1.5)
-	end
-	return part.Position + vel * t + Vector3.new(0, Aim.PredictionYBoost, 0)
+	return Aim.PingMs
 end
 
-local function scoreTarget(bone)
-	local pos, onScreen = Camera:WorldToViewportPoint(bone.Position)
-	if not onScreen then return nil end
-	local angle = angleToTarget(bone)
-	local halfCone = math.clamp(Aim.FOV, 1, 360) / 2
-	if angle > halfCone then return nil end
-	if not canSee(Camera.CFrame.Position, bone) then return nil end
-	return angle * 1000 + pos.Z
+function Aim.GetPingSeconds()
+	return refreshPing() / 1000
+end
+
+-- prediction lead time: built from live ping
+function Aim.GetPredictionTime(dist)
+	local pingSec = refreshPing() / 1000
+	local mode = Aim.PredictionMode
+	if mode == "Off" then
+		return 0
+	elseif mode == "Manual" then
+		return math.clamp(pingSec + Aim.PredictionManual, 0, 3)
+	end
+	-- Auto: scale live ping; optional small distance term keeps long shots honest
+	local t = pingSec * math.max(Aim.PredictionAutoScale, 0)
+	return math.clamp(t, 0, 3)
+end
+
+function Aim.GetPredictedPosition(part)
+	if not part then return nil end
+	local vel = part.AssemblyLinearVelocity or Vector3.zero
+	local dist = (part.Position - Camera.CFrame.Position).Magnitude
+	local t = Aim.GetPredictionTime(dist)
+	return part.Position + vel * t
+end
+
+local function inSilentFov(bone)
+	local half = math.clamp(Aim.SilentFOV, 1, 360) / 2
+	return angleToTarget(bone) <= half
+end
+
+local function inCameraFov(bone)
+	local half = math.clamp(Aim.CameraFOV, 1, 360) / 2
+	return angleToTarget(bone) <= half
+end
+
+-- target must satisfy every ACTIVE feature's FOV
+local function passesActiveFov(bone)
+	local ok = true
+	if Aim.SilentAim then ok = ok and inSilentFov(bone) end
+	if Aim.CameraAim then ok = ok and inCameraFov(bone) end
+	if not Aim.SilentAim and not Aim.CameraAim then
+		-- still show line: use silent FOV as default lock cone
+		ok = inSilentFov(bone)
+	end
+	return ok
+end
+
+local function stickCone()
+	local half = math.clamp(Aim.SilentFOV, 1, 360) / 2
+	if Aim.CameraAim and not Aim.SilentAim then
+		half = math.clamp(Aim.CameraFOV, 1, 360) / 2
+	end
+	if Aim.SilentAim and Aim.CameraAim then
+		half = math.min(
+			math.clamp(Aim.SilentFOV, 1, 360),
+			math.clamp(Aim.CameraFOV, 1, 360)
+		) / 2
+	end
+	return half * math.max(Aim.StickMulti, 1)
 end
 
 function Aim.GetTarget()
-	if not Aim.Enabled then
-		return nil
-	end
+	if not Aim.Enabled then return nil end
 
-	local halfCone = math.clamp(Aim.FOV, 1, 360) / 2
-	local stickCone = halfCone * math.max(Aim.StickFOVMultiplier, 1)
-
-	-- sticky: keep current lock if still valid
 	if Aim.StickyAim and Aim.Target then
 		if isAlive(Aim.Target) then
 			local bone = getBone(Aim.Target.Character)
 			if bone then
-				local angle = angleToTarget(bone)
-				local pos, onScreen = Camera:WorldToViewportPoint(bone.Position)
+				local ang = angleToTarget(bone)
+				local _, onScreen = Camera:WorldToViewportPoint(bone.Position)
 				local dist = (Camera.CFrame.Position - bone.Position).Magnitude
-				if onScreen and angle <= stickCone and dist < 8000 and canSee(Camera.CFrame.Position, bone) then
-					return Aim.Target -- wait on this person
+				if onScreen and ang <= stickCone() and dist < 8000 and canSee(Camera.CFrame.Position, bone) then
+					return Aim.Target
 				end
 			end
 		end
-		-- lost sticky — fall through to re-acquire
 		Aim.Target = nil
 	end
 
 	local best, bestScore = nil, math.huge
 	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= LocalPlayer and isAlive(plr) then
-			if not (Aim.TeamCheck and sameTeam(plr)) then
-				local bone = getBone(plr.Character)
-				if bone then
-					local s = scoreTarget(bone)
-					if s and s < bestScore then
-						bestScore = s
+		if plr ~= LocalPlayer and isAlive(plr) and not (Aim.TeamCheck and sameTeam(plr)) then
+			local bone = getBone(plr.Character)
+			if bone then
+				local pos, onScreen = Camera:WorldToViewportPoint(bone.Position)
+				if onScreen and passesActiveFov(bone) and canSee(Camera.CFrame.Position, bone) then
+					local score = angleToTarget(bone) * 1000 + pos.Z
+					if score < bestScore then
+						bestScore = score
 						best = plr
 					end
 				end
@@ -194,14 +244,15 @@ local function updateCamera(dt)
 	if not target then return end
 	local bone = getBone(target.Character)
 	if not bone then return end
+	if not inCameraFov(bone) then return end -- only lock inside camera FOV
 	local aimPos = Aim.GetPredictedPosition(bone) or bone.Position
 	local smooth = math.clamp(Aim.Smoothness, 0.05, 1)
 	local goal = CFrame.lookAt(Camera.CFrame.Position, aimPos)
 	Camera.CFrame = Camera.CFrame:Lerp(goal, 1 - math.pow(1 - smooth, dt * 60))
 end
 
--- Drawing
-local fovCircle, targetLine, targetDot
+-- drawings
+local silentCircle, camCircle, targetLine, targetDot
 
 local function newDrawing(class)
 	if not Drawing or not Drawing.new then return nil end
@@ -210,19 +261,26 @@ local function newDrawing(class)
 end
 
 local function ensureDrawings()
-	if not fovCircle then
-		fovCircle = newDrawing("Circle")
-		if fovCircle then
-			fovCircle.Visible = false
-			fovCircle.NumSides = 72
-			fovCircle.Filled = false
+	if not silentCircle then
+		silentCircle = newDrawing("Circle")
+		if silentCircle then
+			silentCircle.Visible = false
+			silentCircle.NumSides = 72
+			silentCircle.Filled = false
+		end
+	end
+	if not camCircle then
+		camCircle = newDrawing("Circle")
+		if camCircle then
+			camCircle.Visible = false
+			camCircle.NumSides = 72
+			camCircle.Filled = false
 		end
 	end
 	if not targetLine then
 		targetLine = newDrawing("Line")
 		if targetLine then
 			targetLine.Visible = false
-			targetLine.Thickness = Aim.LineThickness
 		end
 	end
 	if not targetDot then
@@ -237,23 +295,32 @@ local function ensureDrawings()
 	end
 end
 
+local function coneRadiusPx(coneDeg, vp)
+	local camFov = math.rad(math.max(Camera.FieldOfView, 1))
+	local half = math.rad(math.clamp(coneDeg, 1, 360) / 2)
+	return math.clamp((math.tan(half) / math.tan(camFov / 2)) * (vp.X / 2), 8, vp.X * 1.5)
+end
+
+local function drawCone(circle, coneDeg, color, show)
+	if not circle then return end
+	circle.Visible = show
+	if not show then return end
+	local vp = Camera.ViewportSize
+	circle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
+	circle.Radius = coneRadiusPx(coneDeg, vp)
+	circle.Color = color
+	circle.Thickness = Aim.FovThickness
+end
+
 local function updateIndicators()
 	ensureDrawings()
 	local vp = Camera and Camera.ViewportSize or Vector2.new(960, 540)
 	local center = Vector2.new(vp.X / 2, vp.Y / 2)
 
-	if fovCircle then
-		local show = Aim.ShowFov and Aim.Enabled and Aim.SilentAim
-		fovCircle.Visible = show
-		if show then
-			fovCircle.Position = center
-			local camFov = math.rad(math.max(Camera.FieldOfView, 1))
-			local half = math.rad(math.clamp(Aim.FOV, 1, 360) / 2)
-			fovCircle.Radius = math.clamp((math.tan(half) / math.tan(camFov / 2)) * (vp.X / 2), 10, vp.X)
-			fovCircle.Color = Aim.FovColor
-			fovCircle.Thickness = Aim.FovThickness
-		end
-	end
+	-- FOV circles ALWAYS visible while their feature is on (and aim master on)
+	local base = Aim.Enabled
+	drawCone(silentCircle, Aim.SilentFOV, Aim.SilentFovColor, base and Aim.SilentAim and Aim.ShowSilentFov)
+	drawCone(camCircle, Aim.CameraFOV, Aim.CameraFovColor, base and Aim.CameraAim and Aim.ShowCameraFov)
 
 	local bone = Aim.Target and getBone(Aim.Target.Character)
 	local showLine = Aim.ShowTargetLine and Aim.Enabled and bone ~= nil
@@ -270,7 +337,6 @@ local function updateIndicators()
 			targetLine.Visible = false
 		end
 	end
-
 	if targetDot then
 		if showLine then
 			local sp, onScreen = Camera:WorldToViewportPoint(bone.Position)
@@ -283,16 +349,16 @@ local function updateIndicators()
 	end
 end
 
-local defaultCameraFov = nil
-local function applyCameraFov()
+local defaultFieldOfView = nil
+local function applyFieldOfView()
 	if not Camera then return end
-	if defaultCameraFov == nil then
-		defaultCameraFov = Camera.FieldOfView
+	if defaultFieldOfView == nil then
+		defaultFieldOfView = Camera.FieldOfView
 	end
 	if Aim.UseCameraFov then
-		Camera.FieldOfView = math.clamp(Aim.CameraFov, 30, 120)
-	elseif math.abs(Camera.FieldOfView - math.clamp(Aim.CameraFov, 30, 120)) < 0.01 then
-		Camera.FieldOfView = defaultCameraFov
+		Camera.FieldOfView = math.clamp(Aim.CameraFieldOfView, 30, 120)
+	elseif math.abs(Camera.FieldOfView - math.clamp(Aim.CameraFieldOfView, 30, 120)) < 0.01 then
+		Camera.FieldOfView = defaultFieldOfView
 	end
 end
 
@@ -301,9 +367,6 @@ function Aim.SetAimEnabled(on)
 	Aim.AimKeyActive = Aim.Enabled
 	if not Aim.Enabled then
 		Aim.Target = nil
-		if fovCircle then fovCircle.Visible = false end
-		if targetLine then targetLine.Visible = false end
-		if targetDot then targetDot.Visible = false end
 	end
 end
 
@@ -320,6 +383,105 @@ function Aim.ClearSticky()
 	Aim.Target = nil
 end
 
+-- ===================== SILENT AIM HOOKS (multiple methods) =====================
+-- Mouse ClassName is "PlayerMouse". Hit is read-only → must hook __index.
+
+local function isPlayerMouse(self)
+	if typeof(self) ~= "Instance" then return false end
+	local cn = self.ClassName
+	return cn == "PlayerMouse" or cn == "Mouse" or cn == "LocalPlayerMouse"
+end
+
+local inHook = false
+local hookedGame = false
+local hookedMouse = false
+local oldGameIndex
+local oldMouseIndex
+
+local function buildSpoof(self, key)
+	if inHook then return nil, false end
+	if not Aim.Enabled or not Aim.SilentAim then return nil, false end
+	if key ~= "Hit" and key ~= "Target" and key ~= "UnitRay" then return nil, false end
+	if not isPlayerMouse(self) then return nil, false end
+
+	local target = Aim.Target
+	local bone = target and getBone(target.Character)
+	if not bone or not Camera then return nil, false end
+	if not inSilentFov(bone) then return nil, false end -- only spoof inside silent FOV
+
+	inHook = true
+	local ok, spoofed, use = pcall(function()
+		local aimPos = Aim.GetPredictedPosition(bone) or bone.Position
+		if key == "Hit" then
+			return CFrame.lookAt(aimPos, Camera.CFrame.Position), true
+		elseif key == "Target" then
+			return bone, true
+		end
+		local origin = Camera.CFrame.Position
+		local dir = aimPos - origin
+		if dir.Magnitude < 1e-4 then dir = Camera.CFrame.LookVector end
+		return Ray.new(origin, dir.Unit * 4096), true
+	end)
+	inHook = false
+	if ok and use then return spoofed, true end
+	return nil, false
+end
+
+local function installHooks()
+	local wrap = (type(newcclosure) == "function") and newcclosure or function(f) return f end
+	local function safeCheckcaller()
+		if type(checkcaller) == "function" then return checkcaller() end
+		return false
+	end
+
+	-- Method A: game metatable __index (covers mouse accessed via game workspace paths)
+	if not hookedGame and type(hookmetamethod) == "function" then
+		local ok = pcall(function()
+			oldGameIndex = hookmetamethod(game, "__index", wrap(function(self, key)
+				if not safeCheckcaller() then
+					local spoof, hit = buildSpoof(self, key)
+					if hit then return spoof end
+				end
+				return oldGameIndex(self, key)
+			end))
+		end)
+		hookedGame = ok
+	end
+
+	-- Method B: PlayerMouse's own metatable (most reliable for m.Hit)
+	if not hookedMouse then
+		local m = getMouse()
+		if m and type(hookmetamethod) == "function" then
+			local ok = pcall(function()
+				oldMouseIndex = hookmetamethod(m, "__index", wrap(function(self, key)
+					if not safeCheckcaller() then
+						local spoof, hit = buildSpoof(self, key)
+						if hit then return spoof end
+					end
+					return oldMouseIndex(self, key)
+				end))
+			end)
+			hookedMouse = ok
+		end
+	end
+
+	-- Method C: namecall is useless for property index, but ensure mouse exists after respawn
+	return hookedGame or hookedMouse
+end
+
+local function reinstallMouseHook()
+	hookedMouse = false
+	installHooks()
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+	task.wait(1)
+	Camera = Workspace.CurrentCamera
+	Aim.Target = nil
+	reinstallMouseHook()
+end)
+
+-- ===================== keybinds =====================
 local SIDE_BUTTON_NAMES = {
 	MouseButton4 = true, MouseButton5 = true,
 	MouseBackButton = true, MouseForwardButton = true,
@@ -329,21 +491,16 @@ local SIDE_BUTTON_NAMES = {
 local function isAimKeyInput(input)
 	if not input then return false end
 	local k = Aim.AimKey
-	if k and (input.KeyCode == k or input.UserInputType == k) then
-		return true
-	end
+	if k and (input.KeyCode == k or input.UserInputType == k) then return true end
 	local ut = tostring(input.UserInputType):gsub("Enum%.UserInputType%.", "")
 	local kc = tostring(input.KeyCode):gsub("Enum%.KeyCode%.", "")
-	if SIDE_BUTTON_NAMES[ut] or SIDE_BUTTON_NAMES[kc] then
-		if tostring(k or ""):find("Mouse") then
-			return true
-		end
+	if (SIDE_BUTTON_NAMES[ut] or SIDE_BUTTON_NAMES[kc]) and tostring(k or ""):find("Mouse") then
+		return true
 	end
 	return false
 end
 
-local UIS = UserInputService
-UIS.InputBegan:Connect(function(input, gameProcessed)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if not Aim.UseBuiltinAimKey or gameProcessed then return end
 	if not isAimKeyInput(input) then return end
 	if Aim.AimKeyMode == "Hold" then
@@ -353,121 +510,42 @@ UIS.InputBegan:Connect(function(input, gameProcessed)
 	end
 end)
 
-UIS.InputEnded:Connect(function(input)
+UserInputService.InputEnded:Connect(function(input)
 	if not Aim.UseBuiltinAimKey or Aim.AimKeyMode ~= "Hold" then return end
-	if isAimKeyInput(input) then
-		Aim.SetAimEnabled(false)
-	end
+	if isAimKeyInput(input) then Aim.SetAimEnabled(false) end
 end)
 
--- Silent: game MH() reads Mouse.Hit from the CAMERA ray — spoof to predicted target.
-local hooksInstalled = false
-local oldIndex
-local inHook = false
-
-local function installMouseHook()
-	if hooksInstalled then return end
-	if not hookmetamethod then return end
-
-	local wrap = (type(newcclosure) == "function") and newcclosure or function(f) return f end
-	local callerIsCheck = function()
-		if type(checkcaller) == "function" then return checkcaller() end
-		return false
-	end
-
-	oldIndex = hookmetamethod(game, "__index", wrap(function(self, key)
-		if inHook then
-			return oldIndex(self, key)
-		end
-		if callerIsCheck() or not Aim.Enabled or not Aim.SilentAim then
-			return oldIndex(self, key)
-		end
-		if key ~= "Hit" and key ~= "Target" and key ~= "UnitRay" then
-			return oldIndex(self, key)
-		end
-
-		inHook = true
-		local ok, spoofed, useSpoof = pcall(function()
-			local target = Aim.Target
-			local bone = target and getBone(target.Character)
-			if not bone or not Camera then
-				return nil, false
-			end
-
-			local isMouse = false
-			local okCn, cn = pcall(function()
-				return typeof(self) == "Instance" and self.ClassName
-			end)
-			if okCn and cn == "Mouse" then
-				isMouse = true
-			elseif not okCn then
-				local okStr, str = pcall(tostring, self)
-				if okStr and str:lower():find("mouse") then
-					isMouse = true
-				end
-			end
-			if not isMouse then
-				return nil, false
-			end
-
-			-- predicted aim point (camera-ray style hit, not character facing)
-			local aimPos = Aim.GetPredictedPosition(bone) or bone.Position
-
-			if key == "Hit" then
-				-- Hit is where the camera ray lands: put it on the predicted point
-				return CFrame.lookAt(aimPos, Camera.CFrame.Position), true
-			elseif key == "Target" then
-				return bone, true
-			else
-				local origin = Camera.CFrame.Position
-				local dir = aimPos - origin
-				if dir.Magnitude < 1e-4 then
-					dir = Camera.CFrame.LookVector
-				end
-				return Ray.new(origin, dir.Unit * 4096), true
-			end
-		end)
-		inHook = false
-
-		if ok and useSpoof then
-			return spoofed
-		end
-		return oldIndex(self, key)
-	end))
-	hooksInstalled = true
-end
-
+-- ===================== main loop =====================
+local pingTick = 0
 RunService.RenderStepped:Connect(function(dt)
 	Camera = Workspace.CurrentCamera
-	pcall(applyCameraFov)
+	pingTick += dt
+	if pingTick > 0.25 then
+		pingTick = 0
+		refreshPing()
+	end
+	pcall(applyFieldOfView)
+
 	if Aim.Enabled then
 		local ok, err = pcall(Aim.GetTarget)
 		if not ok then
 			Aim.Target = nil
-			warn("[Aimbot] GetTarget failed:", err)
+			warn("[Aimbot] GetTarget:", err)
 		end
-		-- note: we do NOT rotate the character — this game aims with the camera
 		if Aim.CameraAim and Aim.Target then
-			local okCam, errCam = pcall(updateCamera, dt)
-			if not okCam then
-				warn("[Aimbot] camera aim failed:", errCam)
-			end
+			pcall(updateCamera, dt)
 		end
 	end
 	pcall(updateIndicators)
 end)
 
-LocalPlayer.CharacterAdded:Connect(function()
-	task.wait(1)
-	Camera = Workspace.CurrentCamera
-	Aim.Target = nil
+task.defer(function()
+	local installed = installHooks()
+	if not installed then
+		warn("[Aimbot] Could not install mouse hooks")
+	else
+		print("[Aimbot] Hooks ready: game=" .. tostring(hookedGame) .. " mouse=" .. tostring(hookedMouse))
+	end
 end)
-
-local mt = getrawmetatable and getrawmetatable(game)
-if mt and hookmetamethod then
-	installMouseHook()
-else
-	pcall(installMouseHook)
-end
 
 return Aim

@@ -1,6 +1,4 @@
 --// roghoul-hub // Deadcell + Sense + NPC ESP + Aim
--- Loads from this repo so nothing depends on dead hosts.
-
 local RAW = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/"
 
 local library = loadstring(game:HttpGet(RAW .. "Deadcell/source_modified.lua"))()
@@ -8,12 +6,11 @@ local Sense = loadstring(game:HttpGet(RAW .. "scripts/esp/Sense/source.lua"))()
 local NpcEsp = loadstring(game:HttpGet(RAW .. "scripts/esp/NpcEsp.lua"))()
 local Aim = loadstring(game:HttpGet(RAW .. "scripts/Aimbot.lua"))()
 
--- menu keybind only opens/closes UI — never touches aimbot
 Aim.UseBuiltinAimKey = false
 Aim.Enabled = false
 Aim.SilentAim = false
+Aim.CameraAim = false
 
--- Sense defaults
 local enemy = Sense.teamSettings.enemy
 enemy.enabled = true
 enemy.box = true
@@ -30,7 +27,7 @@ Sense.sharedSettings.limitDistance = false
 Sense.sharedSettings.maxDistance = 2500
 Sense.sharedSettings.textSize = 14
 
-local window = library:new_window({ size = Vector2.new(600, 460) })
+local window = library:new_window({ size = Vector2.new(620, 470) })
 
 ----------------------------------------------------------------
 -- VISUALS
@@ -108,11 +105,11 @@ end
 npcSec:new_button({ name = "Rescan NPCs", flag = "npc_rescan", callback = function() NpcEsp.Refresh() end })
 
 ----------------------------------------------------------------
--- COMBAT (split sections, no numbered labels)
+-- COMBAT
 ----------------------------------------------------------------
 local combat = window:new_page({ name = "Combat" })
 
--- Left: main switches
+-- Left: switches
 local main = combat:new_section({ name = "Aimbot", size = "Fill" })
 main:new_toggle({
 	name = "Aimbot",
@@ -133,7 +130,7 @@ main:new_toggle({
 	callback = function(s) Aim.CameraAim = s end,
 })
 main:new_toggle({
-	name = "Sticky Aim (stay on one target)",
+	name = "Sticky Aim",
 	flag = "aim_sticky",
 	state = true,
 	callback = function(s)
@@ -156,46 +153,56 @@ main:new_dropdown({
 	default = "Toggle",
 	callback = function(v) Aim.AimKeyMode = v end,
 })
-
--- Right top: prediction
-local pred = combat:new_section({ name = "Prediction", size = "Fill", side = "right" })
-pred:new_dropdown({
-	name = "Mode",
-	flag = "aim_pred_mode",
-	options = { "Off", "Auto", "Manual" },
-	default = "Auto",
-	callback = function(v) Aim.PredictionMode = v end,
-})
-pred:new_slider({
-	name = "Manual Lead (sec)",
-	flag = "aim_pred_manual",
-	min = 0,
-	max = 100,
-	default = 15,
-	text = "[value]/100s",
-	callback = function(v) Aim.PredictionManual = v / 100 end,
-})
-pred:new_slider({
-	name = "Auto Speed (studs/s)",
-	flag = "aim_pred_speed",
-	min = 50,
-	max = 1200,
-	default = 350,
-	callback = function(v) Aim.PredictionSpeed = v end,
-})
-pred:new_slider({
-	name = "Y Offset",
-	flag = "aim_pred_y",
-	min = -50,
-	max = 50,
-	default = 0,
-	callback = function(v) Aim.PredictionYBoost = v / 10 end,
+main:new_button({
+	name = "Clear Sticky Lock",
+	flag = "aim_clear_sticky",
+	callback = function() Aim.ClearSticky() end,
 })
 
--- Left lower: indicators
-local ind = combat:new_section({ name = "Indicators", size = 280 })
-ind:new_toggle({ name = "Target Line + Dot", flag = "aim_line", state = true, callback = function(s) Aim.ShowTargetLine = s end })
-ind:new_colorpicker({
+-- Right: FOV (always drawn when that feature is on)
+local fovSec = combat:new_section({ name = "FOV", size = "Fill", side = "right" })
+fovSec:new_toggle({
+	name = "Show Silent FOV",
+	flag = "fov_silent_show",
+	state = true,
+	callback = function(s) Aim.ShowSilentFov = s end,
+})
+fovSec:new_slider({
+	name = "Silent FOV (deg)",
+	flag = "fov_silent",
+	min = 10,
+	max = 360,
+	default = 180,
+	callback = function(v) Aim.SilentFOV = v end,
+})
+fovSec:new_colorpicker({
+	name = "Silent FOV Color",
+	flag = "fov_silent_color",
+	default = Aim.SilentFovColor,
+	callback = function(c) Aim.SilentFovColor = c end,
+})
+fovSec:new_toggle({
+	name = "Show Camera FOV",
+	flag = "fov_cam_show",
+	state = true,
+	callback = function(s) Aim.ShowCameraFov = s end,
+})
+fovSec:new_slider({
+	name = "Camera FOV (deg)",
+	flag = "fov_cam",
+	min = 10,
+	max = 360,
+	default = 90,
+	callback = function(v) Aim.CameraFOV = v end,
+})
+fovSec:new_colorpicker({
+	name = "Camera FOV Color",
+	flag = "fov_cam_color",
+	default = Aim.CameraFovColor,
+	callback = function(c) Aim.CameraFovColor = c end,
+})
+fovSec:new_toggle({ name = "Target Line + Dot", flag = "aim_line", state = true, callback = function(s) Aim.ShowTargetLine = s end })
+fovSec:new_colorpicker({
 	name = "Line Color",
 	flag = "aim_line_color",
 	default = Aim.LineColor,
@@ -204,24 +211,54 @@ ind:new_colorpicker({
 		Aim.DotColor = c
 	end,
 })
-ind:new_toggle({ name = "FOV Circle", flag = "aim_fov_circle", state = true, callback = function(s) Aim.ShowFov = s end })
-ind:new_colorpicker({
-	name = "FOV Color",
-	flag = "aim_fov_color",
-	default = Aim.FovColor,
-	callback = function(c) Aim.FovColor = c end,
-})
-ind:new_slider({
-	name = "FOV Cone (deg)",
-	flag = "aim_fov",
-	min = 10,
-	max = 360,
-	default = 180,
-	callback = function(v) Aim.FOV = v end,
+fovSec:new_slider({
+	name = "Line thickness",
+	flag = "aim_line_thick",
+	min = 1,
+	max = 5,
+	default = 2,
+	text = "[value]px",
+	callback = function(v) Aim.LineThickness = v end,
 })
 
--- Right lower: filters + feel
-local feel = combat:new_section({ name = "Filters & Feel", size = 280, side = "right" })
+-- Left lower: prediction (ping based)
+local pred = combat:new_section({ name = "Prediction (ping)", size = 300 })
+pred:new_dropdown({
+	name = "Mode",
+	flag = "aim_pred_mode",
+	options = { "Off", "Auto", "Manual" },
+	default = "Auto",
+	callback = function(v) Aim.PredictionMode = v end,
+})
+pred:new_slider({
+	name = "Auto: ping x",
+	flag = "aim_pred_scale",
+	min = 10,
+	max = 300,
+	default = 100,
+	text = "[value]/100",
+	callback = function(v) Aim.PredictionAutoScale = v / 100 end,
+})
+pred:new_slider({
+	name = "Manual: + sec on ping",
+	flag = "aim_pred_manual",
+	min = 0,
+	max = 100,
+	default = 5,
+	text = "+[value]/100s",
+	callback = function(v) Aim.PredictionManual = v / 100 end,
+})
+pred:new_button({
+	name = "Show live ping (console)",
+	flag = "aim_ping_print",
+	callback = function()
+		local ms = Aim.GetPingSeconds() * 1000
+		print(string.format("[Aimbot] ping=%.1f ms  lead=%.3fs", ms, Aim.GetPredictionTime(0)))
+	end,
+})
+
+-- Right lower: feel
+local feel = combat:new_section({ name = "Filters & Feel", size = 300, side = "right" })
 feel:new_toggle({ name = "Team Check", flag = "aim_team", state = false, callback = function(s) Aim.TeamCheck = s end })
 feel:new_toggle({ name = "Wall Check", flag = "aim_wall", state = false, callback = function(s) Aim.WallCheck = s end })
 feel:new_slider({
@@ -240,16 +277,15 @@ feel:new_dropdown({
 	default = "Head",
 	callback = function(v) Aim.Bone = v end,
 })
-feel:new_toggle({ name = "Use Camera FOV", flag = "cam_fov_on", state = false, callback = function(s) Aim.UseCameraFov = s end })
+feel:new_toggle({ name = "Change game FOV", flag = "cam_fov_on", state = false, callback = function(s) Aim.UseCameraFov = s end })
 feel:new_slider({
-	name = "Camera FOV",
+	name = "Game FOV value",
 	flag = "cam_fov",
 	min = 30,
 	max = 120,
 	default = 70,
-	callback = function(v) Aim.CameraFov = v end,
+	callback = function(v) Aim.CameraFieldOfView = v end,
 })
-feel:new_button({ name = "Clear Sticky Lock", flag = "aim_clear_sticky", callback = function() Aim.ClearSticky() end })
 
 ----------------------------------------------------------------
 -- SETTINGS

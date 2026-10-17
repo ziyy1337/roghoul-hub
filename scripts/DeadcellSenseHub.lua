@@ -9,6 +9,9 @@ local library = loadstring(game:HttpGet(RAW .. "Deadcell/source_modified.lua"))(
 -- 2) Sense ESP (local backup)
 local Sense = loadstring(game:HttpGet(RAW .. "scripts/esp/Sense/source.lua"))()
 
+-- 3) Silent + camera aim
+local Aim = loadstring(game:HttpGet(RAW .. "scripts/Aimbot.lua"))()
+
 -- Sense defaults: enemies on with a solid legit set
 local enemy = Sense.teamSettings.enemy
 enemy.enabled = true
@@ -138,6 +141,80 @@ esp:new_colorpicker({
 	end,
 })
 
+local combat = window:new_page({ name = "Combat" })
+local aim = combat:new_section({ name = "Aim", size = "Fill" })
+
+aim:new_toggle({
+	name = "Aim Enabled",
+	flag = "aim_enabled",
+	state = false,
+	callback = function(state) Aim.Enabled = state end,
+})
+
+aim:new_toggle({
+	name = "Silent Aim (Mouse.Hit)",
+	flag = "aim_silent",
+	state = false,
+	callback = function(state) Aim.SilentAim = state end,
+})
+
+aim:new_toggle({
+	name = "Camera Aim",
+	flag = "aim_camera",
+	state = false,
+	callback = function(state) Aim.CameraAim = state end,
+})
+
+aim:new_toggle({
+	name = "Team Check",
+	flag = "aim_team",
+	state = false,
+	callback = function(state) Aim.TeamCheck = state end,
+})
+
+aim:new_toggle({
+	name = "Wall Check",
+	flag = "aim_wall",
+	state = false,
+	callback = function(state) Aim.WallCheck = state end,
+})
+
+aim:new_slider({
+	name = "FOV",
+	flag = "aim_fov",
+	min = 10,
+	max = 360,
+	default = 180,
+	callback = function(value) Aim.FOV = value end,
+})
+
+aim:new_slider({
+	name = "Camera Smoothness",
+	flag = "aim_smooth",
+	min = 5,
+	max = 100,
+	default = 35,
+	text = "[value]%",
+	callback = function(value) Aim.Smoothness = value / 100 end,
+})
+
+aim:new_dropdown({
+	name = "Target Bone",
+	flag = "aim_bone",
+	options = { "Head", "HumanoidRootPart" },
+	default = "Head",
+	callback = function(value) Aim.Bone = value end,
+})
+
+aim:new_button({
+	name = "Face Target Once",
+	flag = "aim_face_once",
+	callback = function()
+		local t = Aim.GetTarget()
+		if t then Aim.FaceTarget(t) end
+	end,
+})
+
 local settings = window:new_page({ name = "Settings" })
 local menu = settings:new_section({ name = "Menu", size = "Half" })
 menu:new_keybind({ name = "Menu Keybind", flag = "menu_bind" })
@@ -152,4 +229,4 @@ menu:new_toggle({
 -- Start ESP
 pcall(function() Sense.Load() end)
 
-return library, Sense
+return library, Sense, Aim

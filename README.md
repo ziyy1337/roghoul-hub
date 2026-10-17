@@ -40,13 +40,16 @@ local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/ziyy1
 
 Originals with the old GhostDuckyy/vozoid URLs are kept under `Deadcell/backup/*ORIGINAL*`.
 
-## Hub + ESP
+## Hub + ESP + Aim
 
-Deadcell menu with Sense ESP on a Visuals page:
+Deadcell menu with Sense ESP (Visuals) and silent/camera aim (Combat):
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/scripts/DeadcellSenseHub.lua"))()
 ```
+
+- **Visuals:** box, name, health, distance, tracers, chams, arrows
+- **Combat:** silent aim (hooks `Mouse.Hit` — Ro-Ghoul attacks read that), camera aim, FOV, smoothness, bone, team/wall check
 
 ## Minimal menu
 

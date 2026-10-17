@@ -7,7 +7,8 @@ Ro-Ghoul scripts + UI hub.
 | Folder | What goes here |
 |---|---|
 | `Deadcell/` | Deadcell UI library backup (Aimware-style cheat hub menu) |
-| `scripts/` | Game scripts (create when ready) |
+| `scripts/` | Hub scripts — start with `scripts/DeadcellSenseHub.lua` |
+| `scripts/esp/Sense/` | Sense ESP backup + docs |
 
 ## Deadcell UI (backup)
 

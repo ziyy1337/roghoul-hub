@@ -1,6 +1,17 @@
-# Deadcell UI (backup)
+# roghoul-hub
 
-Local backup of the **Deadcell** Roblox UI library (Aimware / cheat-hub style) from [GhostDuckyy/UI-Libraries](https://github.com/GhostDuckyy/UI-Libraries).
+Ro-Ghoul scripts + UI hub.
+
+## Layout
+
+| Folder | What goes here |
+|---|---|
+| `Deadcell/` | Deadcell UI library backup (Aimware-style cheat hub menu) |
+| `scripts/` | Game scripts (create when ready) |
+
+## Deadcell UI (backup)
+
+Local backup of the **Deadcell** Roblox UI library from [GhostDuckyy/UI-Libraries](https://github.com/GhostDuckyy/UI-Libraries).
 
 ## Contents
 

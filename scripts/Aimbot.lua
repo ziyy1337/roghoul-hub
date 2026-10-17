@@ -138,6 +138,7 @@ end
 -- Silent aim: game combat reads Mouse.Hit / Mouse.Target (ClientControl MH)
 local hooksInstalled = false
 local oldIndex
+local inHook = false
 
 local function installMouseHook()
 	if hooksInstalled then return end
@@ -152,25 +153,42 @@ local function installMouseHook()
 	end
 
 	oldIndex = hookmetamethod(game, "__index", wrap(function(self, key)
-		if not callerIsCheck() and Aim.Enabled and Aim.SilentAim then
-			local target = Aim.Target or Aim.GetTarget()
-			local isMouse = (self == getMouse()) or (typeof(self) == "Instance" and self.ClassName == "Mouse")
-			if target and isMouse then
-				local bone = getBone(target.Character)
-				if bone then
-					if key == "Hit" then
-						return CFrame.lookAt(bone.Position, Camera.CFrame.Position)
-					elseif key == "Target" then
-						return bone
-					elseif key == "UnitRay" then
-						local origin = Camera.CFrame.Position
-						local dir = (bone.Position - origin).Unit * 4096
-						return Ray.new(origin, dir)
-					elseif key == "TargetFilter" then
-						return oldIndex(self, key)
-					end
-				end
+		if inHook then
+			return oldIndex(self, key)
+		end
+		if callerIsCheck() or not Aim.Enabled or not Aim.SilentAim then
+			return oldIndex(self, key)
+		end
+		if key ~= "Hit" and key ~= "Target" and key ~= "UnitRay" then
+			return oldIndex(self, key)
+		end
+
+		inHook = true
+		local ok, spoofed, useSpoof = pcall(function()
+			if not (typeof(self) == "Instance" and self.ClassName == "Mouse") then
+				return nil, false
 			end
+			local target = Aim.Target
+			local bone = target and getBone(target.Character)
+			if not bone or not Camera then
+				return nil, false
+			end
+			if key == "Hit" then
+				return CFrame.lookAt(bone.Position, Camera.CFrame.Position), true
+			elseif key == "Target" then
+				return bone, true
+			end
+			local origin = Camera.CFrame.Position
+			local dir = bone.Position - origin
+			if dir.Magnitude < 1e-4 then
+				dir = Camera.CFrame.LookVector
+			end
+			return Ray.new(origin, dir.Unit * 4096), true
+		end)
+		inHook = false
+
+		if ok and useSpoof then
+			return spoofed
 		end
 		return oldIndex(self, key)
 	end))
@@ -179,13 +197,17 @@ end
 
 RunService.RenderStepped:Connect(function(dt)
 	if Aim.Enabled then
-		Aim.GetTarget()
-		if Aim.CameraAim and Aim.Target then
-			updateCamera(dt)
+		Camera = Workspace.CurrentCamera
+		local ok, err = pcall(Aim.GetTarget)
+		if not ok then
+			Aim.Target = nil
+			warn("[Aimbot] GetTarget failed:", err)
 		end
-		-- optional: keep facing for silent melee
-		if Aim.SilentAim and Aim.Target and not Aim.CameraAim then
-			-- FaceTarget left manual to avoid fighting movement; menu can enable later
+		if Aim.CameraAim and Aim.Target then
+			local okCam, errCam = pcall(updateCamera, dt)
+			if not okCam then
+				warn("[Aimbot] camera aim failed:", errCam)
+			end
 		end
 	end
 end)

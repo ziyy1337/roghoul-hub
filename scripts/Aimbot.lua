@@ -1,4 +1,4 @@
---// Ro-Ghoul aim: silent (Mouse.Hit) + camera look
+--// Ro-Ghoul aim: silent (Mouse.Hit) + camera look + target line
 -- Standalone-safe; DeadcellSenseHub loads this as well.
 
 local Players = game:GetService("Players")
@@ -15,30 +15,31 @@ local Aim = {
 	CameraAim = false,
 	TeamCheck = false,
 	WallCheck = false,
+	-- FOV = full cone in degrees (360 = lock anything on screen)
 	FOV = 180,
-	Smoothness = 0.35,
-	Bone = "Head", -- Head | HumanoidRootPart
+	Smoothness = 0.45,
+	Bone = "Head",
 	Target = nil,
 
-	-- FOV circle (aim indicator)
+	-- visuals
 	ShowFov = true,
 	FovColor = Color3.fromRGB(255, 80, 80),
 	FovThickness = 1.5,
+	ShowTargetLine = true,
+	LineColor = Color3.fromRGB(80, 160, 255), -- blue
+	LineThickness = 1.5,
+	DotColor = Color3.fromRGB(80, 160, 255),
 
-	-- Camera FOV changer (separate from aim FOV)
+	-- Camera FOV changer
 	UseCameraFov = false,
 	CameraFov = 70,
 
-	-- Aim keybind (mouse side buttons: MouseBackButton / M4 names)
+	-- keybind
 	AimKey = Enum.KeyCode.MouseBackButton,
-	AimKeyMode = "Toggle", -- Toggle | Hold
+	AimKeyMode = "Toggle",
 	AimKeyActive = false,
-	UseBuiltinAimKey = true, -- hub sets false when using Deadcell keybind instead
+	UseBuiltinAimKey = true,
 }
-
-local function getMouse()
-	return LocalPlayer:GetMouse()
-end
 
 local function isAlive(plr)
 	local char = plr and plr.Character
@@ -50,15 +51,13 @@ end
 
 local function getBone(char)
 	if not char then return nil end
-	local part = char:FindFirstChild(Aim.Bone) or char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
-	return part
+	return char:FindFirstChild(Aim.Bone) or char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
 end
 
 local function sameTeam(plr)
 	if LocalPlayer.Team and plr.Team then
 		return LocalPlayer.Team == plr.Team
 	end
-	-- Ro-Ghoul: Customization Team value when present
 	local mine = LocalPlayer:FindFirstChild("PlayerFolder")
 	local theirs = plr:FindFirstChild("PlayerFolder")
 	if mine and theirs then
@@ -86,30 +85,34 @@ local function canSee(fromPos, part)
 	return inst:IsDescendantOf(part.Parent) or inst == part
 end
 
-local function screenCenterDist(part)
-	local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
-	if not onScreen then return math.huge, false end
-	local vp = Camera.ViewportSize
-	local dx = pos.X - vp.X / 2
-	local dy = pos.Y - vp.Y / 2
-	return math.sqrt(dx * dx + dy * dy), true
+-- true angular FOV: Aim.FOV is full cone degrees (180 = in front half, 360 = everything)
+local function angleToTarget(part)
+	local origin = Camera.CFrame.Position
+	local look = Camera.CFrame.LookVector
+	local to = part.Position - origin
+	if to.Magnitude < 1e-4 then return 0 end
+	local dot = look:Dot(to.Unit)
+	return math.deg(math.acos(math.clamp(dot, -1, 1)))
 end
 
 function Aim.GetTarget()
 	if not Aim.Enabled then return nil end
-	local best, bestDist = nil, math.huge
-	local fovScale = (Camera.ViewportSize.X / 2) * (math.clamp(Aim.FOV, 1, 360) / 180)
+	local best, bestScore = nil, math.huge
+	local halfCone = math.clamp(Aim.FOV, 1, 360) / 2
 
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= LocalPlayer and isAlive(plr) then
 			if not (Aim.TeamCheck and sameTeam(plr)) then
 				local bone = getBone(plr.Character)
 				if bone then
-					local dist, onScreen = screenCenterDist(bone)
-					if onScreen and dist <= fovScale then
-						if canSee(Camera.CFrame.Position, bone) then
-							if dist < bestDist then
-								bestDist = dist
+					local pos, onScreen = Camera:WorldToViewportPoint(bone.Position)
+					if onScreen then
+						local angle = angleToTarget(bone)
+						if angle <= halfCone and canSee(Camera.CFrame.Position, bone) then
+							-- prefer smallest angle (crosshair lock), break ties by distance
+							local score = angle * 1000 + pos.Z
+							if score < bestScore then
+								bestScore = score
 								best = plr
 							end
 						end
@@ -123,63 +126,119 @@ function Aim.GetTarget()
 	return best
 end
 
--- Face local character toward target (helps melee in Ro-Ghoul)
 function Aim.FaceTarget(target)
 	if not target then return end
 	local char = LocalPlayer.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	local bone = getBone(target.Character)
 	if hrp and bone then
-		local look = (Vector3.new(bone.Position.X, hrp.Position.Y, bone.Position.Z) - hrp.Position)
+		local look = Vector3.new(bone.Position.X, hrp.Position.Y, bone.Position.Z) - hrp.Position
 		if look.Magnitude > 0.05 then
 			hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + look.Unit)
 		end
 	end
 end
 
--- Camera smooth look
 local function updateCamera(dt)
 	if not (Aim.Enabled and Aim.CameraAim) then return end
 	local target = Aim.Target or Aim.GetTarget()
 	if not target then return end
 	local bone = getBone(target.Character)
 	if not bone then return end
-
 	local smooth = math.clamp(Aim.Smoothness, 0.05, 1)
 	local goal = CFrame.lookAt(Camera.CFrame.Position, bone.Position)
 	Camera.CFrame = Camera.CFrame:Lerp(goal, 1 - math.pow(1 - smooth, dt * 60))
 end
 
--- Aim FOV circle (center screen)
-local fovCircle
-local function ensureFovCircle()
-	if fovCircle then return fovCircle end
+-- Drawing: FOV circle + blue line + dot
+local fovCircle, targetLine, targetDot
+
+local function newDrawing(class)
 	if not Drawing or not Drawing.new then return nil end
-	local ok, circle = pcall(Drawing.new, "Circle")
-	if not ok or not circle then return nil end
-	circle.Visible = false
-	circle.Color = Aim.FovColor
-	circle.Thickness = Aim.FovThickness
-	circle.NumSides = 64
-	circle.Filled = false
-	circle.Radius = 100
-	circle.Position = Vector2.new(0, 0)
-	fovCircle = circle
-	return circle
+	local ok, obj = pcall(Drawing.new, class)
+	if ok then return obj end
+	return nil
 end
 
-local function updateFovCircle()
-	local circle = ensureFovCircle()
-	if not circle then return end
-	local show = Aim.ShowFov and Aim.Enabled
-	circle.Visible = show and Aim.SilentAim
-	if not circle.Visible then return end
-	local vp = Camera.ViewportSize
-	circle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
-	-- Aim.FOV is degrees of screen half-width (same scale GetTarget uses)
-	circle.Radius = (vp.X / 2) * (math.clamp(Aim.FOV, 1, 360) / 180)
-	circle.Color = Aim.FovColor
-	circle.Thickness = Aim.FovThickness
+local function ensureDrawings()
+	if not fovCircle then
+		fovCircle = newDrawing("Circle")
+		if fovCircle then
+			fovCircle.Visible = false
+			fovCircle.NumSides = 72
+			fovCircle.Filled = false
+			fovCircle.Color = Aim.FovColor
+			fovCircle.Thickness = Aim.FovThickness
+		end
+	end
+	if not targetLine then
+		targetLine = newDrawing("Line")
+		if targetLine then
+			targetLine.Visible = false
+			targetLine.Color = Aim.LineColor
+			targetLine.Thickness = Aim.LineThickness
+			targetLine.From = Vector2.new(0, 0)
+			targetLine.To = Vector2.new(0, 0)
+		end
+	end
+	if not targetDot then
+		-- Drawing has no "Dot" here — filled tiny circle instead
+		targetDot = newDrawing("Circle")
+		if targetDot then
+			targetDot.Visible = false
+			targetDot.Color = Aim.DotColor
+			targetDot.Radius = 4
+			targetDot.NumSides = 16
+			targetDot.Filled = true
+			targetDot.Thickness = 1
+		end
+	end
+end
+
+local function updateIndicators()
+	ensureDrawings()
+	local vp = Camera and Camera.ViewportSize or Vector2.new(960, 540)
+	local center = Vector2.new(vp.X / 2, vp.Y / 2)
+
+	-- FOV circle = real cone projected roughly to screen radius
+	if fovCircle then
+		local show = Aim.ShowFov and Aim.Enabled and Aim.SilentAim
+		fovCircle.Visible = show
+		if show then
+			fovCircle.Position = center
+			-- map cone half-angle to pixel radius via FOV of camera
+			local camFov = math.rad(math.max(Camera.FieldOfView, 1))
+			local half = math.rad(math.clamp(Aim.FOV, 1, 360) / 2)
+			-- radius in px along horizontal axis
+			fovCircle.Radius = math.clamp((math.tan(half) / math.tan(camFov / 2)) * (vp.X / 2), 10, vp.X)
+			fovCircle.Color = Aim.FovColor
+			fovCircle.Thickness = Aim.FovThickness
+		end
+	end
+
+	-- blue line crosshair -> target + dot on target
+	local bone = Aim.Target and getBone(Aim.Target.Character)
+	local showLine = Aim.ShowTargetLine and Aim.Enabled and bone ~= nil
+	if targetLine then
+		targetLine.Visible = showLine and true or false
+		if targetLine.Visible then
+			local sp, onScreen = Camera:WorldToViewportPoint(bone.Position)
+			targetLine.From = center
+			targetLine.To = Vector2.new(sp.X, sp.Y)
+			targetLine.Color = Aim.LineColor
+			targetLine.Thickness = Aim.LineThickness
+			targetLine.Visible = onScreen
+		end
+	end
+	if targetDot then
+		targetDot.Visible = showLine
+		if targetDot.Visible then
+			local sp, onScreen = Camera:WorldToViewportPoint(bone.Position)
+			targetDot.Position = Vector2.new(sp.X, sp.Y)
+			targetDot.Color = Aim.DotColor
+			targetDot.Visible = onScreen
+		end
+	end
 end
 
 local defaultCameraFov = nil
@@ -190,11 +249,8 @@ local function applyCameraFov()
 	end
 	if Aim.UseCameraFov then
 		Camera.FieldOfView = math.clamp(Aim.CameraFov, 30, 120)
-	elseif Camera.FieldOfView ~= defaultCameraFov then
-		-- restore only if we previously changed it
-		if math.abs(Camera.FieldOfView - math.clamp(Aim.CameraFov, 30, 120)) < 0.01 then
-			Camera.FieldOfView = defaultCameraFov
-		end
+	elseif math.abs(Camera.FieldOfView - math.clamp(Aim.CameraFov, 30, 120)) < 0.01 then
+		Camera.FieldOfView = defaultCameraFov
 	end
 end
 
@@ -204,9 +260,8 @@ function Aim.SetAimEnabled(on)
 	if not Aim.Enabled then
 		Aim.Target = nil
 		if fovCircle then fovCircle.Visible = false end
-		if Aim.UseCameraFov and Camera then
-			-- leave camera fov as-is until user disables UseCameraFov
-		end
+		if targetLine then targetLine.Visible = false end
+		if targetDot then targetDot.Visible = false end
 	end
 end
 
@@ -215,7 +270,6 @@ function Aim.ToggleAim()
 	return Aim.Enabled
 end
 
--- Accepts Enum.KeyCode.* or Enum.UserInputType.* (side buttons = MouseBackButton / M4 names)
 function Aim.SetAimKey(key)
 	Aim.AimKey = key
 end
@@ -235,17 +289,11 @@ local function isAimKeyInput(input)
 	if k and (input.KeyCode == k or input.UserInputType == k) then
 		return true
 	end
-	-- side buttons may arrive under names the enum table doesn't list
 	local ut = tostring(input.UserInputType):gsub("Enum%.UserInputType%.", "")
 	local kc = tostring(input.KeyCode):gsub("Enum%.KeyCode%.", "")
 	if SIDE_BUTTON_NAMES[ut] or SIDE_BUTTON_NAMES[kc] then
-		-- only treat as aim key if user bound a side/mouse key (or default back button)
 		local bound = tostring(k or "")
-		if bound:find("Mouse") or bound:find("MouseButton") then
-			return true
-		end
-		-- if bound key is MouseBackButton, match any side-button name too
-		if bound:find("MouseBack") and (SIDE_BUTTON_NAMES[ut] or SIDE_BUTTON_NAMES[kc]) then
+		if bound:find("Mouse") then
 			return true
 		end
 	end
@@ -254,8 +302,7 @@ end
 
 local UIS = UserInputService
 UIS.InputBegan:Connect(function(input, gameProcessed)
-	if not Aim.UseBuiltinAimKey then return end
-	if gameProcessed then return end
+	if not Aim.UseBuiltinAimKey or gameProcessed then return end
 	if not isAimKeyInput(input) then return end
 	if Aim.AimKeyMode == "Hold" then
 		Aim.SetAimEnabled(true)
@@ -265,14 +312,13 @@ UIS.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 UIS.InputEnded:Connect(function(input)
-	if not Aim.UseBuiltinAimKey then return end
-	if Aim.AimKeyMode ~= "Hold" then return end
+	if not Aim.UseBuiltinAimKey or Aim.AimKeyMode ~= "Hold" then return end
 	if isAimKeyInput(input) then
 		Aim.SetAimEnabled(false)
 	end
 end)
 
--- Silent aim: game combat reads Mouse.Hit / Mouse.Target (ClientControl MH)
+-- Silent aim: Ro-Ghoul ClientControl MH() reads Mouse.Hit / Mouse.Target
 local hooksInstalled = false
 local oldIndex
 local inHook = false
@@ -283,9 +329,7 @@ local function installMouseHook()
 
 	local wrap = (type(newcclosure) == "function") and newcclosure or function(f) return f end
 	local callerIsCheck = function()
-		if type(checkcaller) == "function" then
-			return checkcaller()
-		end
+		if type(checkcaller) == "function" then return checkcaller() end
 		return false
 	end
 
@@ -302,25 +346,44 @@ local function installMouseHook()
 
 		inHook = true
 		local ok, spoofed, useSpoof = pcall(function()
-			if not (typeof(self) == "Instance" and self.ClassName == "Mouse") then
-				return nil, false
-			end
+			-- refresh target so we always lock the current best
 			local target = Aim.Target
 			local bone = target and getBone(target.Character)
 			if not bone or not Camera then
 				return nil, false
 			end
+
+			-- identify mouse loosely (Instance or Mouse userdata)
+			local isMouse = false
+			local okMouse, cn = pcall(function()
+				return typeof(self) == "Instance" and self.ClassName
+			end)
+			if okMouse and cn == "Mouse" then
+				isMouse = true
+			elseif not okMouse then
+				-- userdata Mouse: name contains Mouse
+				local okName = pcall(function() return tostring(self) end)
+				if okName and tostring(self):lower():find("mouse") then
+					isMouse = true
+				end
+			end
+			if not isMouse then
+				return nil, false
+			end
+
 			if key == "Hit" then
+				-- position ON the bone, looking at camera (matches what MH expects as a CFrame)
 				return CFrame.lookAt(bone.Position, Camera.CFrame.Position), true
 			elseif key == "Target" then
 				return bone, true
+			else
+				local origin = Camera.CFrame.Position
+				local dir = bone.Position - origin
+				if dir.Magnitude < 1e-4 then
+					dir = Camera.CFrame.LookVector
+				end
+				return Ray.new(origin, dir.Unit * 4096), true
 			end
-			local origin = Camera.CFrame.Position
-			local dir = bone.Position - origin
-			if dir.Magnitude < 1e-4 then
-				dir = Camera.CFrame.LookVector
-			end
-			return Ray.new(origin, dir.Unit * 4096), true
 		end)
 		inHook = false
 
@@ -341,6 +404,9 @@ RunService.RenderStepped:Connect(function(dt)
 			Aim.Target = nil
 			warn("[Aimbot] GetTarget failed:", err)
 		end
+		if Aim.SilentAim and Aim.Target then
+			pcall(Aim.FaceTarget, Aim.Target)
+		end
 		if Aim.CameraAim and Aim.Target then
 			local okCam, errCam = pcall(updateCamera, dt)
 			if not okCam then
@@ -348,21 +414,18 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 		end
 	end
-	pcall(updateFovCircle)
+	pcall(updateIndicators)
 end)
 
--- Re-resolve camera after respawn/teleport
 LocalPlayer.CharacterAdded:Connect(function()
 	task.wait(1)
 	Camera = Workspace.CurrentCamera
 end)
 
--- Ensure hook as soon as silent aim is requested
 local mt = getrawmetatable and getrawmetatable(game)
 if mt and hookmetamethod then
 	installMouseHook()
 else
-	-- still try standard executor API
 	pcall(installMouseHook)
 end
 

@@ -1,4 +1,4 @@
---// roghoul-hub // Deadcell menu + Sense ESP
+--// roghoul-hub // Deadcell + Sense ESP + NPC ESP + Aim
 -- Loads from this repo so nothing depends on dead hosts.
 
 local RAW = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/"
@@ -6,14 +6,17 @@ local RAW = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/"
 -- 1) Deadcell UI
 local library = loadstring(game:HttpGet(RAW .. "Deadcell/source_modified.lua"))()
 
--- 2) Sense ESP (local backup)
+-- 2) Player ESP (Sense)
 local Sense = loadstring(game:HttpGet(RAW .. "scripts/esp/Sense/source.lua"))()
 
--- 3) Silent + camera aim
-local Aim = loadstring(game:HttpGet(RAW .. "scripts/Aimbot.lua"))()
-Aim.UseBuiltinAimKey = false -- menu keybind owns aim toggle (supports Mouse4/5)
+-- 3) NPC ESP (group colors)
+local NpcEsp = loadstring(game:HttpGet(RAW .. "scripts/esp/NpcEsp.lua"))()
 
--- Sense defaults: enemies on with a solid legit set
+-- 4) Aimbot
+local Aim = loadstring(game:HttpGet(RAW .. "scripts/Aimbot.lua"))()
+Aim.UseBuiltinAimKey = false -- menu keybind owns aim toggle (side buttons OK)
+
+-- Sense defaults
 local enemy = Sense.teamSettings.enemy
 enemy.enabled = true
 enemy.box = true
@@ -24,9 +27,7 @@ enemy.healthText = false
 enemy.name = true
 enemy.distance = true
 enemy.tracer = false
-enemy.tracerOrigin = "Bottom"
 enemy.chams = false
-enemy.chamsVisibleOnly = false
 enemy.offScreenArrow = true
 
 local friendly = Sense.teamSettings.friendly
@@ -36,90 +37,69 @@ Sense.sharedSettings.limitDistance = false
 Sense.sharedSettings.maxDistance = 2500
 Sense.sharedSettings.textSize = 14
 
--- 3) Menu
-local window = library:new_window({ size = Vector2.new(560, 420) })
+-- Menu
+local window = library:new_window({ size = Vector2.new(580, 440) })
 
+----------------------------------------------------------------
+-- VISUALS
+----------------------------------------------------------------
 local visuals = window:new_page({ name = "Visuals" })
-local esp = visuals:new_section({ name = "ESP", size = "Fill" })
 
-esp:new_toggle({
-	name = "ESP Enabled",
+-- Player ESP
+local playerEsp = visuals:new_section({ name = "Player ESP", size = "Fill" })
+
+playerEsp:new_toggle({
+	name = "Enabled",
 	flag = "esp_enabled",
 	state = true,
 	callback = function(state)
 		enemy.enabled = state
-		if state then
-			pcall(function() Sense.Load() end)
-		end
+		if state then pcall(function() Sense.Load() end) end
 	end,
 })
-
-esp:new_toggle({
+playerEsp:new_toggle({
 	name = "Box",
 	flag = "esp_box",
 	state = true,
 	callback = function(state) enemy.box = state end,
 })
-
-esp:new_toggle({
-	name = "Box Outline",
-	flag = "esp_box_outline",
-	state = true,
-	callback = function(state) enemy.boxOutline = state end,
-})
-
-esp:new_toggle({
+playerEsp:new_toggle({
 	name = "Health Bar",
 	flag = "esp_health",
 	state = true,
 	callback = function(state) enemy.healthBar = state end,
 })
-
-esp:new_toggle({
+playerEsp:new_toggle({
 	name = "Name",
 	flag = "esp_name",
 	state = true,
 	callback = function(state) enemy.name = state end,
 })
-
-esp:new_toggle({
+playerEsp:new_toggle({
 	name = "Distance",
 	flag = "esp_distance",
 	state = true,
 	callback = function(state) enemy.distance = state end,
 })
-
-esp:new_toggle({
+playerEsp:new_toggle({
 	name = "Tracers",
 	flag = "esp_tracer",
 	state = false,
 	callback = function(state) enemy.tracer = state end,
 })
-
-esp:new_toggle({
+playerEsp:new_toggle({
 	name = "Chams",
 	flag = "esp_chams",
 	state = false,
 	callback = function(state) enemy.chams = state end,
 })
-
-esp:new_toggle({
+playerEsp:new_toggle({
 	name = "Off-screen Arrows",
 	flag = "esp_arrows",
 	state = true,
 	callback = function(state) enemy.offScreenArrow = state end,
 })
-
-esp:new_toggle({
-	name = "Team Check (friendly ESP)",
-	flag = "esp_team",
-	state = false,
-	callback = function(state)
-		friendly.enabled = state
-	end,
-})
-
-esp:new_slider({
+playerEsp:new_slider({
 	name = "Max Distance",
 	flag = "esp_dist",
 	min = 100,
@@ -130,9 +110,8 @@ esp:new_slider({
 		Sense.sharedSettings.limitDistance = value < 5000
 	end,
 })
-
-esp:new_colorpicker({
-	name = "Enemy Color",
+playerEsp:new_colorpicker({
+	name = "Player Color",
 	flag = "esp_color",
 	default = enemy.boxColor[1],
 	callback = function(color)
@@ -142,46 +121,121 @@ esp:new_colorpicker({
 	end,
 })
 
-local combat = window:new_page({ name = "Combat" })
-local aim = combat:new_section({ name = "Aim", size = "Fill" })
+-- NPC ESP
+local npcSec = visuals:new_section({ name = "NPC ESP (groups)", size = "Fill", side = "right" })
 
-aim:new_toggle({
-	name = "Aim Enabled",
+npcSec:new_toggle({
+	name = "NPC ESP Enabled",
+	flag = "npc_enabled",
+	state = true,
+	callback = function(state) NpcEsp.Enabled = state end,
+})
+npcSec:new_toggle({
+	name = "Names",
+	flag = "npc_names",
+	state = true,
+	callback = function(state) NpcEsp.ShowNames = state end,
+})
+npcSec:new_toggle({
+	name = "Health",
+	flag = "npc_hp",
+	state = true,
+	callback = function(state) NpcEsp.ShowHealth = state end,
+})
+npcSec:new_toggle({
+	name = "Boxes",
+	flag = "npc_box",
+	state = true,
+	callback = function(state) NpcEsp.ShowBox = state end,
+})
+npcSec:new_slider({
+	name = "NPC Distance",
+	flag = "npc_dist",
+	min = 100,
+	max = 8000,
+	default = 2500,
+	callback = function(value) NpcEsp.MaxDistance = value end,
+})
+npcSec:new_seperator({ name = "Group Colors" })
+
+local groupOrder = { "Human", "Ghoul", "CCG", "Aggro", "Boss", "Named" }
+for _, groupName in ipairs(groupOrder) do
+	local g = NpcEsp.Groups[groupName]
+	npcSec:new_toggle({
+		name = groupName,
+		flag = "npc_g_" .. groupName,
+		state = true,
+		callback = function(state) g.enabled = state end,
+	})
+	npcSec:new_colorpicker({
+		name = groupName .. " color",
+		flag = "npc_gc_" .. groupName,
+		default = g.color,
+		callback = function(c) g.color = c end,
+	})
+end
+
+npcSec:new_button({
+	name = "Rescan NPCs",
+	flag = "npc_rescan",
+	callback = function() NpcEsp.Refresh() end,
+})
+
+----------------------------------------------------------------
+-- COMBAT
+----------------------------------------------------------------
+local combat = window:new_page({ name = "Combat" })
+local lock = combat:new_section({ name = "Aim Lock", size = "Fill" })
+
+lock:new_toggle({
+	name = "1) Aim ON (master)",
 	flag = "aim_enabled",
 	state = false,
 	callback = function(state) Aim.SetAimEnabled(state) end,
 })
-
-aim:new_toggle({
-	name = "Silent Aim (Mouse.Hit)",
+lock:new_toggle({
+	name = "2) Silent Aim (hits follow target)",
 	flag = "aim_silent",
 	state = false,
 	callback = function(state) Aim.SilentAim = state end,
 })
-
-aim:new_toggle({
-	name = "Camera Aim",
+lock:new_toggle({
+	name = "3) Camera Lock (look at target)",
 	flag = "aim_camera",
 	state = false,
 	callback = function(state) Aim.CameraAim = state end,
 })
 
-aim:new_toggle({
-	name = "Team Check",
-	flag = "aim_team",
-	state = false,
-	callback = function(state) Aim.TeamCheck = state end,
+lock:new_seperator({ name = "Target line / FOV" })
+lock:new_toggle({
+	name = "Blue line + dot on target",
+	flag = "aim_line",
+	state = true,
+	callback = function(state) Aim.ShowTargetLine = state end,
 })
-
-aim:new_toggle({
-	name = "Wall Check",
-	flag = "aim_wall",
-	state = false,
-	callback = function(state) Aim.WallCheck = state end,
+lock:new_colorpicker({
+	name = "Line / dot color",
+	flag = "aim_line_color",
+	default = Aim.LineColor,
+	callback = function(c)
+		Aim.LineColor = c
+		Aim.DotColor = c
+	end,
 })
-
-aim:new_slider({
-	name = "FOV",
+lock:new_toggle({
+	name = "FOV circle",
+	flag = "aim_fov_circle",
+	state = true,
+	callback = function(state) Aim.ShowFov = state end,
+})
+lock:new_colorpicker({
+	name = "FOV circle color",
+	flag = "aim_fov_color",
+	default = Aim.FovColor,
+	callback = function(c) Aim.FovColor = c end,
+})
+lock:new_slider({
+	name = "FOV cone (degrees, 360=all)",
 	flag = "aim_fov",
 	min = 10,
 	max = 360,
@@ -189,56 +243,51 @@ aim:new_slider({
 	callback = function(value) Aim.FOV = value end,
 })
 
-aim:new_toggle({
-	name = "Show FOV Circle",
-	flag = "aim_fov_circle",
-	state = true,
-	callback = function(state) Aim.ShowFov = state end,
+lock:new_seperator({ name = "Filters / feel" })
+lock:new_toggle({
+	name = "Team Check",
+	flag = "aim_team",
+	state = false,
+	callback = function(state) Aim.TeamCheck = state end,
 })
-
-aim:new_colorpicker({
-	name = "FOV Circle Color",
-	flag = "aim_fov_color",
-	default = Aim.FovColor,
-	callback = function(color) Aim.FovColor = color end,
+lock:new_toggle({
+	name = "Wall Check",
+	flag = "aim_wall",
+	state = false,
+	callback = function(state) Aim.WallCheck = state end,
 })
-
-aim:new_toggle({
-	name = "Use Camera FOV",
+lock:new_slider({
+	name = "Camera Smoothness",
+	flag = "aim_smooth",
+	min = 5,
+	max = 100,
+	default = 45,
+	text = "[value]%",
+	callback = function(value) Aim.Smoothness = value / 100 end,
+})
+lock:new_dropdown({
+	name = "Bone",
+	flag = "aim_bone",
+	options = { "Head", "HumanoidRootPart" },
+	default = "Head",
+	callback = function(value) Aim.Bone = value end,
+})
+lock:new_toggle({
+	name = "Use Camera FOV changer",
 	flag = "cam_fov_on",
 	state = false,
 	callback = function(state) Aim.UseCameraFov = state end,
 })
-
-aim:new_slider({
-	name = "Camera FOV",
+lock:new_slider({
+	name = "Camera FOV value",
 	flag = "cam_fov",
 	min = 30,
 	max = 120,
 	default = 70,
 	callback = function(value) Aim.CameraFov = value end,
 })
-
-aim:new_slider({
-	name = "Camera Smoothness",
-	flag = "aim_smooth",
-	min = 5,
-	max = 100,
-	default = 35,
-	text = "[value]%",
-	callback = function(value) Aim.Smoothness = value / 100 end,
-})
-
-aim:new_dropdown({
-	name = "Target Bone",
-	flag = "aim_bone",
-	options = { "Head", "HumanoidRootPart" },
-	default = "Head",
-	callback = function(value) Aim.Bone = value end,
-})
-
-aim:new_keybind({
-	name = "Aim Keybind (side buttons OK)",
+lock:new_keybind({
+	name = "Aim keybind (side buttons OK)",
 	flag = "aim_keybind",
 	default = Enum.KeyCode.MouseBackButton,
 	mode = "Toggle",
@@ -247,19 +296,15 @@ aim:new_keybind({
 		Aim.SetAimEnabled(state == true)
 	end,
 })
-
-aim:new_dropdown({
-	name = "Aim Key Mode",
+lock:new_dropdown({
+	name = "Aim key mode",
 	flag = "aim_key_mode",
 	options = { "Toggle", "Hold" },
 	default = "Toggle",
-	callback = function(value)
-		Aim.AimKeyMode = value
-	end,
+	callback = function(value) Aim.AimKeyMode = value end,
 })
-
-aim:new_button({
-	name = "Face Target Once",
+lock:new_button({
+	name = "Face target once",
 	flag = "aim_face_once",
 	callback = function()
 		local t = Aim.GetTarget()
@@ -267,6 +312,9 @@ aim:new_button({
 	end,
 })
 
+----------------------------------------------------------------
+-- SETTINGS
+----------------------------------------------------------------
 local settings = window:new_page({ name = "Settings" })
 local menu = settings:new_section({ name = "Menu", size = "Half" })
 menu:new_keybind({
@@ -294,7 +342,6 @@ menu:new_toggle({
 	end,
 })
 
--- Start ESP
 pcall(function() Sense.Load() end)
 
-return library, Sense, Aim
+return library, Sense, NpcEsp, Aim

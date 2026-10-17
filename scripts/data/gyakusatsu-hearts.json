@@ -1,0 +1,99 @@
+{
+  "capturedAt": "2026-10-17T22:07:50Z",
+  "placeId": 914010731,
+  "jobId": "aa55fd4e-be04-43cd-877d-12460bacf02c",
+  "gameName": "[🎃🍂 HALLO SZN!] Ro-Ghoul [ALPHA]",
+
+  "gyakusatsuSpawn": {
+    "path": "Workspace.NPCSpawns.GyakusatsuSpawn",
+    "className": "Part",
+    "position": [-574.9998779296875, 65.750244140625, 272.5000305175781],
+    "size": [0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513],
+    "orientation": [0, 90, 0],
+    "anchored": true,
+    "shape": "Enum.PartType.Block",
+    "note": "Tiny marker part at the Gyakusatsu spawn point. No children when captured (event inactive)."
+  },
+
+  "heartsStation": {
+    "path": "Workspace.GyaSacTable",
+    "className": "Model",
+    "pivot": [-1040.5, 65.25, 267.5],
+    "children": [
+      "Bench [MeshPart]",
+      "GyaSacIndicator [MeshPart]",
+      "Part [Part]"
+    ],
+
+    "head": {
+      "note": "Main/head piece of the hearts dissection station (indicator mesh).",
+      "path": "Workspace.GyaSacTable.GyaSacIndicator",
+      "className": "MeshPart",
+      "position": [-1039.5, 64.25, 267.5],
+      "size": [9.5, 6.5, 14.5],
+      "orientation": [0, 180, 0],
+      "anchored": true,
+      "cframe": [-1039.5, 64.25, 267.5, -1, 0, 0, 0, 1, 0, 0, 0, -1],
+      "children": [
+        "GyaSacScript [Script]",
+        "HeartsScript [Script]",
+        "Decal [Decal]",
+        "Decal [Decal]",
+        "Decal [Decal]",
+        "Decal [Decal]",
+        "Decal [Decal]",
+        "ClickDetector [ClickDetector]"
+      ]
+    },
+
+    "bench": {
+      "path": "Workspace.GyaSacTable.Bench",
+      "className": "MeshPart",
+      "position": [-1039.5, 62.75, 267.5],
+      "size": [8, 3.5, 5],
+      "orientation": [0, -90, 0],
+      "anchored": true
+    },
+
+    "base": {
+      "path": "Workspace.GyaSacTable.Part",
+      "className": "Part",
+      "position": [-1039.25, 72.5, 267.5],
+      "size": [12.5, 5, 20],
+      "shape": "Enum.PartType.Block",
+      "anchored": true
+    }
+  },
+
+  "scripts": [
+    {
+      "path": "Workspace.GyaSacTable.GyaSacIndicator.HeartsScript",
+      "className": "Script",
+      "readable": false,
+      "reason": "Server Script — client cannot decompile (RunContext not Client)"
+    },
+    {
+      "path": "Workspace.GyaSacTable.GyaSacIndicator.GyaSacScript",
+      "className": "Script",
+      "readable": false,
+      "reason": "Server Script — client cannot decompile (RunContext not Client)"
+    }
+  ],
+
+  "remotes": [
+    "ReplicatedStorage.Remotes.GyaSac.Dissect [RemoteFunction]",
+    "ReplicatedStorage.Remotes.GyaSac.UpdatePL [RemoteEvent]",
+    "ReplicatedStorage.Remotes.HeartExchange [RemoteFunction]"
+  ],
+
+  "inventory": {
+    "path": "PlayerFolder.Inventory.Hearts",
+    "className": "StringValue",
+    "localValueAtCapture": "0"
+  },
+
+  "liveHeartPartsAtCapture": {
+    "count": 0,
+    "note": "No BasePart named Heart/Hearts existed in Workspace during this capture (Gyakusatsu event not running). Re-run scripts/data/gyakusatsu-scan.lua when the event is live to refresh positions."
+  }
+}

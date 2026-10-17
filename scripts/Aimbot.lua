@@ -1,5 +1,5 @@
---// Ro-Ghoul aim: silent (Mouse.Hit) + camera look + target line
--- Standalone-safe; DeadcellSenseHub loads this as well.
+--// Ro-Ghoul aim: silent (camera Mouse.Hit) + sticky target + prediction
+-- Game attacks use MH() = Mouse.Hit (where the CAMERA looks), not character facing.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -10,31 +10,41 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 local Aim = {
-	Enabled = false,
+	Enabled = false, -- starts OFF — waits for you
 	SilentAim = false,
 	CameraAim = false,
 	TeamCheck = false,
 	WallCheck = false,
-	-- FOV = full cone in degrees (360 = lock anything on screen)
-	FOV = 180,
+
+	FOV = 180, -- full cone degrees
 	Smoothness = 0.45,
 	Bone = "Head",
 	Target = nil,
 
-	-- visuals
+	-- sticky: stay on the same target until it dies / leaves stick FOV
+	StickyAim = true,
+	StickFOVMultiplier = 1.6, -- lose lock when angle > FOV/2 * multiplier
+
+	-- prediction (seconds of lead on target velocity)
+	PredictionMode = "Auto", -- "Off" | "Auto" | "Manual"
+	PredictionManual = 0.15, -- seconds when Manual
+	PredictionSpeed = 350,   -- studs/s used by Auto (dist/speed = lead time)
+	PredictionYBoost = 0,    -- extra vertical offset
+
+	-- indicators
 	ShowFov = true,
 	FovColor = Color3.fromRGB(255, 80, 80),
 	FovThickness = 1.5,
 	ShowTargetLine = true,
-	LineColor = Color3.fromRGB(80, 160, 255), -- blue
+	LineColor = Color3.fromRGB(80, 160, 255),
 	LineThickness = 1.5,
 	DotColor = Color3.fromRGB(80, 160, 255),
 
-	-- Camera FOV changer
+	-- camera FOV changer
 	UseCameraFov = false,
 	CameraFov = 70,
 
-	-- keybind
+	-- keybind (menu does NOT touch aim)
 	AimKey = Enum.KeyCode.MouseBackButton,
 	AimKeyMode = "Toggle",
 	AimKeyActive = false,
@@ -81,41 +91,80 @@ local function canSee(fromPos, part)
 	params.FilterDescendantsInstances = exclude
 	local result = Workspace:Raycast(fromPos, (part.Position - fromPos), params)
 	if not result then return true end
-	local inst = result.Instance
-	return inst:IsDescendantOf(part.Parent) or inst == part
+	return result.Instance:IsDescendantOf(part.Parent) or result.Instance == part
 end
 
--- true angular FOV: Aim.FOV is full cone degrees (180 = in front half, 360 = everything)
 local function angleToTarget(part)
-	local origin = Camera.CFrame.Position
 	local look = Camera.CFrame.LookVector
-	local to = part.Position - origin
+	local to = part.Position - Camera.CFrame.Position
 	if to.Magnitude < 1e-4 then return 0 end
-	local dot = look:Dot(to.Unit)
-	return math.deg(math.acos(math.clamp(dot, -1, 1)))
+	return math.deg(math.acos(math.clamp(look:Dot(to.Unit), -1, 1)))
+end
+
+-- lead target position by velocity
+function Aim.GetPredictedPosition(part)
+	if not part then return nil end
+	local mode = Aim.PredictionMode
+	if mode == "Off" then
+		return part.Position
+	end
+	local vel = part.AssemblyLinearVelocity or Vector3.zero
+	local t = 0
+	if mode == "Manual" then
+		t = math.clamp(Aim.PredictionManual, 0, 1.5)
+	else -- Auto
+		local dist = (part.Position - Camera.CFrame.Position).Magnitude
+		local speed = math.max(Aim.PredictionSpeed, 50)
+		t = math.clamp(dist / speed, 0, 1.5)
+	end
+	return part.Position + vel * t + Vector3.new(0, Aim.PredictionYBoost, 0)
+end
+
+local function scoreTarget(bone)
+	local pos, onScreen = Camera:WorldToViewportPoint(bone.Position)
+	if not onScreen then return nil end
+	local angle = angleToTarget(bone)
+	local halfCone = math.clamp(Aim.FOV, 1, 360) / 2
+	if angle > halfCone then return nil end
+	if not canSee(Camera.CFrame.Position, bone) then return nil end
+	return angle * 1000 + pos.Z
 end
 
 function Aim.GetTarget()
-	if not Aim.Enabled then return nil end
-	local best, bestScore = nil, math.huge
-	local halfCone = math.clamp(Aim.FOV, 1, 360) / 2
+	if not Aim.Enabled then
+		return nil
+	end
 
+	local halfCone = math.clamp(Aim.FOV, 1, 360) / 2
+	local stickCone = halfCone * math.max(Aim.StickFOVMultiplier, 1)
+
+	-- sticky: keep current lock if still valid
+	if Aim.StickyAim and Aim.Target then
+		if isAlive(Aim.Target) then
+			local bone = getBone(Aim.Target.Character)
+			if bone then
+				local angle = angleToTarget(bone)
+				local pos, onScreen = Camera:WorldToViewportPoint(bone.Position)
+				local dist = (Camera.CFrame.Position - bone.Position).Magnitude
+				if onScreen and angle <= stickCone and dist < 8000 and canSee(Camera.CFrame.Position, bone) then
+					return Aim.Target -- wait on this person
+				end
+			end
+		end
+		-- lost sticky — fall through to re-acquire
+		Aim.Target = nil
+	end
+
+	local best, bestScore = nil, math.huge
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= LocalPlayer and isAlive(plr) then
 			if not (Aim.TeamCheck and sameTeam(plr)) then
 				local bone = getBone(plr.Character)
 				if bone then
-					local pos, onScreen = Camera:WorldToViewportPoint(bone.Position)
-					if onScreen then
-						local angle = angleToTarget(bone)
-						if angle <= halfCone and canSee(Camera.CFrame.Position, bone) then
-							-- prefer smallest angle (crosshair lock), break ties by distance
-							local score = angle * 1000 + pos.Z
-							if score < bestScore then
-								bestScore = score
-								best = plr
-							end
-						end
+					local s = scoreTarget(bone)
+					if s and s < bestScore then
+						bestScore = s
+						best = plr
 					end
 				end
 			end
@@ -145,19 +194,19 @@ local function updateCamera(dt)
 	if not target then return end
 	local bone = getBone(target.Character)
 	if not bone then return end
+	local aimPos = Aim.GetPredictedPosition(bone) or bone.Position
 	local smooth = math.clamp(Aim.Smoothness, 0.05, 1)
-	local goal = CFrame.lookAt(Camera.CFrame.Position, bone.Position)
+	local goal = CFrame.lookAt(Camera.CFrame.Position, aimPos)
 	Camera.CFrame = Camera.CFrame:Lerp(goal, 1 - math.pow(1 - smooth, dt * 60))
 end
 
--- Drawing: FOV circle + blue line + dot
+-- Drawing
 local fovCircle, targetLine, targetDot
 
 local function newDrawing(class)
 	if not Drawing or not Drawing.new then return nil end
 	local ok, obj = pcall(Drawing.new, class)
-	if ok then return obj end
-	return nil
+	return ok and obj or nil
 end
 
 local function ensureDrawings()
@@ -167,26 +216,19 @@ local function ensureDrawings()
 			fovCircle.Visible = false
 			fovCircle.NumSides = 72
 			fovCircle.Filled = false
-			fovCircle.Color = Aim.FovColor
-			fovCircle.Thickness = Aim.FovThickness
 		end
 	end
 	if not targetLine then
 		targetLine = newDrawing("Line")
 		if targetLine then
 			targetLine.Visible = false
-			targetLine.Color = Aim.LineColor
 			targetLine.Thickness = Aim.LineThickness
-			targetLine.From = Vector2.new(0, 0)
-			targetLine.To = Vector2.new(0, 0)
 		end
 	end
 	if not targetDot then
-		-- Drawing has no "Dot" here — filled tiny circle instead
 		targetDot = newDrawing("Circle")
 		if targetDot then
 			targetDot.Visible = false
-			targetDot.Color = Aim.DotColor
 			targetDot.Radius = 4
 			targetDot.NumSides = 16
 			targetDot.Filled = true
@@ -200,43 +242,43 @@ local function updateIndicators()
 	local vp = Camera and Camera.ViewportSize or Vector2.new(960, 540)
 	local center = Vector2.new(vp.X / 2, vp.Y / 2)
 
-	-- FOV circle = real cone projected roughly to screen radius
 	if fovCircle then
 		local show = Aim.ShowFov and Aim.Enabled and Aim.SilentAim
 		fovCircle.Visible = show
 		if show then
 			fovCircle.Position = center
-			-- map cone half-angle to pixel radius via FOV of camera
 			local camFov = math.rad(math.max(Camera.FieldOfView, 1))
 			local half = math.rad(math.clamp(Aim.FOV, 1, 360) / 2)
-			-- radius in px along horizontal axis
 			fovCircle.Radius = math.clamp((math.tan(half) / math.tan(camFov / 2)) * (vp.X / 2), 10, vp.X)
 			fovCircle.Color = Aim.FovColor
 			fovCircle.Thickness = Aim.FovThickness
 		end
 	end
 
-	-- blue line crosshair -> target + dot on target
 	local bone = Aim.Target and getBone(Aim.Target.Character)
 	local showLine = Aim.ShowTargetLine and Aim.Enabled and bone ~= nil
+
 	if targetLine then
-		targetLine.Visible = showLine and true or false
-		if targetLine.Visible then
+		if showLine then
 			local sp, onScreen = Camera:WorldToViewportPoint(bone.Position)
 			targetLine.From = center
 			targetLine.To = Vector2.new(sp.X, sp.Y)
 			targetLine.Color = Aim.LineColor
 			targetLine.Thickness = Aim.LineThickness
 			targetLine.Visible = onScreen
+		else
+			targetLine.Visible = false
 		end
 	end
+
 	if targetDot then
-		targetDot.Visible = showLine
-		if targetDot.Visible then
+		if showLine then
 			local sp, onScreen = Camera:WorldToViewportPoint(bone.Position)
 			targetDot.Position = Vector2.new(sp.X, sp.Y)
 			targetDot.Color = Aim.DotColor
 			targetDot.Visible = onScreen
+		else
+			targetDot.Visible = false
 		end
 	end
 end
@@ -274,13 +316,14 @@ function Aim.SetAimKey(key)
 	Aim.AimKey = key
 end
 
+function Aim.ClearSticky()
+	Aim.Target = nil
+end
+
 local SIDE_BUTTON_NAMES = {
-	MouseButton4 = true,
-	MouseButton5 = true,
-	MouseBackButton = true,
-	MouseForwardButton = true,
-	MouseX1 = true,
-	MouseX2 = true,
+	MouseButton4 = true, MouseButton5 = true,
+	MouseBackButton = true, MouseForwardButton = true,
+	MouseX1 = true, MouseX2 = true,
 }
 
 local function isAimKeyInput(input)
@@ -292,8 +335,7 @@ local function isAimKeyInput(input)
 	local ut = tostring(input.UserInputType):gsub("Enum%.UserInputType%.", "")
 	local kc = tostring(input.KeyCode):gsub("Enum%.KeyCode%.", "")
 	if SIDE_BUTTON_NAMES[ut] or SIDE_BUTTON_NAMES[kc] then
-		local bound = tostring(k or "")
-		if bound:find("Mouse") then
+		if tostring(k or ""):find("Mouse") then
 			return true
 		end
 	end
@@ -318,7 +360,7 @@ UIS.InputEnded:Connect(function(input)
 	end
 end)
 
--- Silent aim: Ro-Ghoul ClientControl MH() reads Mouse.Hit / Mouse.Target
+-- Silent: game MH() reads Mouse.Hit from the CAMERA ray — spoof to predicted target.
 local hooksInstalled = false
 local oldIndex
 local inHook = false
@@ -346,24 +388,21 @@ local function installMouseHook()
 
 		inHook = true
 		local ok, spoofed, useSpoof = pcall(function()
-			-- refresh target so we always lock the current best
 			local target = Aim.Target
 			local bone = target and getBone(target.Character)
 			if not bone or not Camera then
 				return nil, false
 			end
 
-			-- identify mouse loosely (Instance or Mouse userdata)
 			local isMouse = false
-			local okMouse, cn = pcall(function()
+			local okCn, cn = pcall(function()
 				return typeof(self) == "Instance" and self.ClassName
 			end)
-			if okMouse and cn == "Mouse" then
+			if okCn and cn == "Mouse" then
 				isMouse = true
-			elseif not okMouse then
-				-- userdata Mouse: name contains Mouse
-				local okName = pcall(function() return tostring(self) end)
-				if okName and tostring(self):lower():find("mouse") then
+			elseif not okCn then
+				local okStr, str = pcall(tostring, self)
+				if okStr and str:lower():find("mouse") then
 					isMouse = true
 				end
 			end
@@ -371,14 +410,17 @@ local function installMouseHook()
 				return nil, false
 			end
 
+			-- predicted aim point (camera-ray style hit, not character facing)
+			local aimPos = Aim.GetPredictedPosition(bone) or bone.Position
+
 			if key == "Hit" then
-				-- position ON the bone, looking at camera (matches what MH expects as a CFrame)
-				return CFrame.lookAt(bone.Position, Camera.CFrame.Position), true
+				-- Hit is where the camera ray lands: put it on the predicted point
+				return CFrame.lookAt(aimPos, Camera.CFrame.Position), true
 			elseif key == "Target" then
 				return bone, true
 			else
 				local origin = Camera.CFrame.Position
-				local dir = bone.Position - origin
+				local dir = aimPos - origin
 				if dir.Magnitude < 1e-4 then
 					dir = Camera.CFrame.LookVector
 				end
@@ -404,9 +446,7 @@ RunService.RenderStepped:Connect(function(dt)
 			Aim.Target = nil
 			warn("[Aimbot] GetTarget failed:", err)
 		end
-		if Aim.SilentAim and Aim.Target then
-			pcall(Aim.FaceTarget, Aim.Target)
-		end
+		-- note: we do NOT rotate the character — this game aims with the camera
 		if Aim.CameraAim and Aim.Target then
 			local okCam, errCam = pcall(updateCamera, dt)
 			if not okCam then
@@ -420,6 +460,7 @@ end)
 LocalPlayer.CharacterAdded:Connect(function()
 	task.wait(1)
 	Camera = Workspace.CurrentCamera
+	Aim.Target = nil
 end)
 
 local mt = getrawmetatable and getrawmetatable(game)

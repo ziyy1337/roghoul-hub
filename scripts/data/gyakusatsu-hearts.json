@@ -1,84 +1,121 @@
 {
-  "capturedAt": "2026-10-17T22:07:50Z",
+  "capturedAt": "2026-10-17T22:15:00Z",
   "placeId": 914010731,
   "jobId": "aa55fd4e-be04-43cd-877d-12460bacf02c",
   "gameName": "[🎃🍂 HALLO SZN!] Ro-Ghoul [ALPHA]",
+  "eventActive": true,
 
-  "gyakusatsuSpawn": {
-    "path": "Workspace.NPCSpawns.GyakusatsuSpawn",
+  "hearts": {
+    "note": "Four corner heart/mesh parts on Workspace.Gyakusatsu (FR/FL/BR/BL.Spawn). Shared mesh rbxassetid://3088475056.",
+    "bossPath": "Workspace.Gyakusatsu",
+    "bossPivot": [-574.9998779296875, 65.750244140625, 272.5000305175781],
+    "parts": [
+      {
+        "corner": "FR",
+        "path": "Workspace.Gyakusatsu.FR.Spawn",
+        "position": [-635.6426391601562, 68.45059967041016, 200.1134796142578],
+        "size": [26.400001525878906, 25.599998474121097, 12],
+        "meshId": "rbxassetid://3088475056",
+        "anchored": true
+      },
+      {
+        "corner": "FL",
+        "path": "Workspace.Gyakusatsu.FL.Spawn",
+        "position": [-635.4097900390625, 69.88905334472656, 342.41522216796875],
+        "size": [26.800003051757816, 26.200000762939457, 12],
+        "meshId": "rbxassetid://3088475056",
+        "anchored": true
+      },
+      {
+        "corner": "BR",
+        "path": "Workspace.Gyakusatsu.BR.Spawn",
+        "position": [-530.4989013671875, 67.97514343261719, 206.58303833007812],
+        "size": [31.198383331298828, 28.454551696777344, 13.94285774230957],
+        "meshId": "rbxassetid://3088475056",
+        "anchored": true
+      },
+      {
+        "corner": "BL",
+        "path": "Workspace.Gyakusatsu.BL.Spawn",
+        "position": [-519.5874633789062, 67.38052368164062, 341.9673767089844],
+        "size": [28.80000114440918, 27.200000762939457, 12],
+        "meshId": "rbxassetid://3088475056",
+        "anchored": true
+      }
+    ]
+  },
+
+  "statueHead": {
+    "note": "Main/head part of the live Gyakusatsu statue NPC.",
+    "path": "Workspace.NPCSpawns.GyakusatsuSpawn.Gyakusatsu.Head",
     "className": "Part",
+    "position": [-575.00439453125, 67.50845336914062, 272.5012817382813],
+    "size": [2, 1, 1],
+    "anchored": true
+  },
+
+  "statue": {
+    "path": "Workspace.NPCSpawns.GyakusatsuSpawn.Gyakusatsu",
+    "pivot": [-574.9998779296875, 65.750244140625, 272.5000305175781],
+    "humanoid": {
+      "name": "Statue",
+      "health": 80400,
+      "maxHealth": 80400
+    },
+    "humanoidRootPart": {
+      "position": [-574.9998779296875, 65.750244140625, 272.5000305175781],
+      "size": [2, 2.5, 1]
+    },
+    "children": [
+      "HitboxGroup [Model]",
+      "Kagune [Model]",
+      "ServerControl [Folder]",
+      "NPCFolder [Folder]",
+      "Statue [Humanoid]",
+      "UpperTorso [MeshPart]",
+      "LowerTorso [MeshPart]",
+      "Head [Part]",
+      "HumanoidRootPart [Part]"
+    ]
+  },
+
+  "gyakusatsuSpawnMarker": {
+    "path": "Workspace.NPCSpawns.GyakusatsuSpawn",
     "position": [-574.9998779296875, 65.750244140625, 272.5000305175781],
-    "size": [0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513],
-    "orientation": [0, 90, 0],
-    "anchored": true,
-    "shape": "Enum.PartType.Block",
-    "note": "Tiny marker part at the Gyakusatsu spawn point. No children when captured (event inactive)."
+    "size": [0.001, 0.001, 0.001],
+    "note": "Tiny marker; statue NPC lives under it when the event is live."
   },
 
   "heartsStation": {
     "path": "Workspace.GyaSacTable",
-    "className": "Model",
     "pivot": [-1040.5, 65.25, 267.5],
-    "children": [
-      "Bench [MeshPart]",
-      "GyaSacIndicator [MeshPart]",
-      "Part [Part]"
-    ],
-
     "head": {
-      "note": "Main/head piece of the hearts dissection station (indicator mesh).",
       "path": "Workspace.GyaSacTable.GyaSacIndicator",
       "className": "MeshPart",
       "position": [-1039.5, 64.25, 267.5],
       "size": [9.5, 6.5, 14.5],
       "orientation": [0, 180, 0],
-      "anchored": true,
-      "cframe": [-1039.5, 64.25, 267.5, -1, 0, 0, 0, 1, 0, 0, 0, -1],
       "children": [
         "GyaSacScript [Script]",
         "HeartsScript [Script]",
-        "Decal [Decal]",
-        "Decal [Decal]",
-        "Decal [Decal]",
-        "Decal [Decal]",
-        "Decal [Decal]",
+        "Decal [Decal] x5",
         "ClickDetector [ClickDetector]"
       ]
     },
-
-    "bench": {
-      "path": "Workspace.GyaSacTable.Bench",
-      "className": "MeshPart",
-      "position": [-1039.5, 62.75, 267.5],
-      "size": [8, 3.5, 5],
-      "orientation": [0, -90, 0],
-      "anchored": true
-    },
-
-    "base": {
-      "path": "Workspace.GyaSacTable.Part",
-      "className": "Part",
-      "position": [-1039.25, 72.5, 267.5],
-      "size": [12.5, 5, 20],
-      "shape": "Enum.PartType.Block",
-      "anchored": true
-    }
+    "benchPosition": [-1039.5, 62.75, 267.5],
+    "basePosition": [-1039.25, 72.5, 267.5]
   },
 
-  "scripts": [
-    {
-      "path": "Workspace.GyaSacTable.GyaSacIndicator.HeartsScript",
-      "className": "Script",
-      "readable": false,
-      "reason": "Server Script — client cannot decompile (RunContext not Client)"
-    },
-    {
-      "path": "Workspace.GyaSacTable.GyaSacIndicator.GyaSacScript",
-      "className": "Script",
-      "readable": false,
-      "reason": "Server Script — client cannot decompile (RunContext not Client)"
-    }
-  ],
+  "bossBodyCentralBlobs": {
+    "note": "Stacked Blob1 meshes in Body (mesh rbxassetid://3088474911) — center column of the mass.",
+    "positions": [
+      [-573.8197021484375, 58.885684967041016, 268.22607421875],
+      [-574.7857666015625, 65.88568878173828, 267.96728515625],
+      [-574.6656494140625, 74.88565063476562, 275.2464294433594],
+      [-574.6656494140625, 80.88565063476562, 275.2464599609375]
+    ],
+    "size": [19.72746467590332, 22.22764396667481, 13.43019676208496]
+  },
 
   "remotes": [
     "ReplicatedStorage.Remotes.GyaSac.Dissect [RemoteFunction]",
@@ -88,12 +125,11 @@
 
   "inventory": {
     "path": "PlayerFolder.Inventory.Hearts",
-    "className": "StringValue",
-    "localValueAtCapture": "0"
+    "className": "StringValue"
   },
 
-  "liveHeartPartsAtCapture": {
-    "count": 0,
-    "note": "No BasePart named Heart/Hearts existed in Workspace during this capture (Gyakusatsu event not running). Re-run scripts/data/gyakusatsu-scan.lua when the event is live to refresh positions."
-  }
+  "scripts": [
+    "Workspace.GyaSacTable.GyaSacIndicator.HeartsScript [Script, server]",
+    "Workspace.GyaSacTable.GyaSacIndicator.GyaSacScript [Script, server]"
+  ]
 }

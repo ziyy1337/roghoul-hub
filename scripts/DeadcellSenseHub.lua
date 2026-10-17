@@ -4,12 +4,14 @@ local RAW = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/"
 local library = loadstring(game:HttpGet(RAW .. "Deadcell/source_modified.lua"))()
 local Sense = loadstring(game:HttpGet(RAW .. "scripts/esp/Sense/source.lua"))()
 local NpcEsp = loadstring(game:HttpGet(RAW .. "scripts/esp/NpcEsp.lua"))()
+local GyakuEsp = loadstring(game:HttpGet(RAW .. "scripts/GyakusatsuHeartESP.lua"))()
 local Aim = loadstring(game:HttpGet(RAW .. "scripts/Aimbot.lua"))()
 
 Aim.UseBuiltinAimKey = false
 Aim.Enabled = false
 Aim.SilentAim = false
 Aim.CameraAim = false
+GyakuEsp.Enabled = false
 
 local enemy = Sense.teamSettings.enemy
 enemy.enabled = true
@@ -103,6 +105,25 @@ for _, groupName in ipairs({ "Human", "Ghoul", "CCG", "Aggro", "Boss", "Named" }
 	})
 end
 npcSec:new_button({ name = "Rescan NPCs", flag = "npc_rescan", callback = function() NpcEsp.Refresh() end })
+
+-- Gyakusatsu map markers (off by default)
+local gyakuSec = visuals:new_section({ name = "Gyakusatsu", size = 220 })
+gyakuSec:new_toggle({
+	name = "Show Heart Map Markers",
+	flag = "gyaku_esp",
+	state = false,
+	callback = function(s) GyakuEsp.Enabled = s end,
+})
+gyakuSec:new_toggle({ name = "Hearts", flag = "gyaku_hearts", state = true, callback = function(s) GyakuEsp.ShowHearts = s end })
+gyakuSec:new_toggle({ name = "Head", flag = "gyaku_head", state = true, callback = function(s) GyakuEsp.ShowHead = s end })
+gyakuSec:new_toggle({ name = "Station", flag = "gyaku_station", state = true, callback = function(s) GyakuEsp.ShowStation = s end })
+gyakuSec:new_toggle({ name = "Lines", flag = "gyaku_beams", state = true, callback = function(s) GyakuEsp.ShowBeams = s end })
+gyakuSec:new_colorpicker({
+	name = "Heart Color",
+	flag = "gyaku_color",
+	default = GyakuEsp.HeartColor,
+	callback = function(c) GyakuEsp.SetColor("heart", c) end,
+})
 
 ----------------------------------------------------------------
 -- COMBAT
@@ -288,6 +309,87 @@ feel:new_slider({
 })
 
 ----------------------------------------------------------------
+-- AUTOFARM (placeholders only — no logic yet)
+----------------------------------------------------------------
+local farm = window:new_page({ name = "Autofarm" })
+
+local farmMain = farm:new_section({ name = "General", size = "Fill" })
+farmMain:new_toggle({ name = "Autofarm Enabled", flag = "farm_enabled", state = false, callback = function() end })
+farmMain:new_toggle({ name = "Auto Attack", flag = "farm_attack", state = false, callback = function() end })
+farmMain:new_toggle({ name = "Auto Collect", flag = "farm_collect", state = false, callback = function() end })
+farmMain:new_toggle({ name = "Auto Respawn / Return", flag = "farm_respawn", state = false, callback = function() end })
+farmMain:new_slider({
+	name = "Farm Delay (sec)",
+	flag = "farm_delay",
+	min = 0,
+	max = 100,
+	default = 20,
+	text = "[value]/10s",
+	callback = function() end,
+})
+farmMain:new_button({ name = "Stop Farm (placeholder)", flag = "farm_stop", callback = function() end })
+
+local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })
+farmTarget:new_dropdown({
+	name = "NPC Group",
+	flag = "farm_group",
+	options = { "Human", "Ghoul", "CCG", "Aggro", "Boss", "Gyakusatsu", "Any" },
+	default = "Ghoul",
+	callback = function() end,
+})
+farmTarget:new_toggle({ name = "Prefer Nearest", flag = "farm_nearest", state = true, callback = function() end })
+farmTarget:new_toggle({ name = "Prefer Lowest HP", flag = "farm_lowhp", state = false, callback = function() end })
+farmTarget:new_toggle({ name = "Ignore Players", flag = "farm_noplayers", state = true, callback = function() end })
+farmTarget:new_slider({
+	name = "Max Farm Distance",
+	flag = "farm_dist",
+	min = 50,
+	max = 5000,
+	default = 800,
+	callback = function() end,
+})
+
+local farmLoadout = farm:new_section({ name = "Loadout", size = 260 })
+farmLoadout:new_dropdown({
+	name = "Kagune Stage",
+	flag = "farm_kagune_stage",
+	options = { "None", "Stage 1", "Stage 2", "Stage 3", "Stage 4" },
+	default = "None",
+	callback = function() end,
+})
+farmLoadout:new_toggle({ name = "Auto Equip Kagune", flag = "farm_equip_kagune", state = false, callback = function() end })
+farmLoadout:new_dropdown({
+	name = "Quinque",
+	flag = "farm_quinque",
+	options = { "None", "Kakuja", "Kagune Quinque", "CCG Isshin", "Custom" },
+	default = "None",
+	callback = function() end,
+})
+farmLoadout:new_toggle({ name = "Auto Equip Quinque", flag = "farm_equip_quinque", state = false, callback = function() end })
+farmLoadout:new_dropdown({
+	name = "RC / Form",
+	flag = "farm_rc",
+	options = { "Default", "Low RC", "Mid RC", "High RC" },
+	default = "Default",
+	callback = function() end,
+})
+
+local farmMisc = farm:new_section({ name = "Extras (placeholder)", size = 260, side = "right" })
+farmMisc:new_toggle({ name = "Auto Kagune Toggle", flag = "farm_kagune_tog", state = false, callback = function() end })
+farmMisc:new_toggle({ name = "Auto Quinque Swap", flag = "farm_quinque_swap", state = false, callback = function() end })
+farmMisc:new_toggle({ name = "Auto Heart Pickup", flag = "farm_hearts", state = false, callback = function() end })
+farmMisc:new_toggle({ name = "Auto Dissect (Gyakusatsu)", flag = "farm_dissect", state = false, callback = function() end })
+farmMisc:new_dropdown({
+	name = "Farm Mode",
+	flag = "farm_mode",
+	options = { "NPC Grind", "Boss Only", "Hearts / Events", "RC Farm" },
+	default = "NPC Grind",
+	callback = function() end,
+})
+farmMisc:new_button({ name = "Apply Loadout (placeholder)", flag = "farm_apply", callback = function() end })
+farmMisc:new_button({ name = "Reset Placeholders", flag = "farm_reset", callback = function() end })
+
+----------------------------------------------------------------
 -- SETTINGS
 ----------------------------------------------------------------
 local settings = window:new_page({ name = "Settings" })
@@ -319,4 +421,4 @@ menu:new_toggle({
 
 pcall(function() Sense.Load() end)
 
-return library, Sense, NpcEsp, Aim
+return library, Sense, NpcEsp, GyakuEsp, Aim

@@ -9,7 +9,7 @@ local Workspace = game:GetService("Workspace")
 local Camera = Workspace.CurrentCamera
 
 local GyakuEsp = {
-	Enabled = true,
+	Enabled = false, -- off until you turn it on
 	ShowHearts = true,
 	ShowHead = true,
 	ShowStation = true,

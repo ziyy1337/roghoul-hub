@@ -19,6 +19,21 @@ local Aim = {
 	Smoothness = 0.35,
 	Bone = "Head", -- Head | HumanoidRootPart
 	Target = nil,
+
+	-- FOV circle (aim indicator)
+	ShowFov = true,
+	FovColor = Color3.fromRGB(255, 80, 80),
+	FovThickness = 1.5,
+
+	-- Camera FOV changer (separate from aim FOV)
+	UseCameraFov = false,
+	CameraFov = 70,
+
+	-- Aim keybind (mouse side buttons: MouseBackButton / M4 names)
+	AimKey = Enum.KeyCode.MouseBackButton,
+	AimKeyMode = "Toggle", -- Toggle | Hold
+	AimKeyActive = false,
+	UseBuiltinAimKey = true, -- hub sets false when using Deadcell keybind instead
 }
 
 local function getMouse()
@@ -135,6 +150,128 @@ local function updateCamera(dt)
 	Camera.CFrame = Camera.CFrame:Lerp(goal, 1 - math.pow(1 - smooth, dt * 60))
 end
 
+-- Aim FOV circle (center screen)
+local fovCircle
+local function ensureFovCircle()
+	if fovCircle then return fovCircle end
+	if not Drawing or not Drawing.new then return nil end
+	local ok, circle = pcall(Drawing.new, "Circle")
+	if not ok or not circle then return nil end
+	circle.Visible = false
+	circle.Color = Aim.FovColor
+	circle.Thickness = Aim.FovThickness
+	circle.NumSides = 64
+	circle.Filled = false
+	circle.Radius = 100
+	circle.Position = Vector2.new(0, 0)
+	fovCircle = circle
+	return circle
+end
+
+local function updateFovCircle()
+	local circle = ensureFovCircle()
+	if not circle then return end
+	local show = Aim.ShowFov and Aim.Enabled
+	circle.Visible = show and Aim.SilentAim
+	if not circle.Visible then return end
+	local vp = Camera.ViewportSize
+	circle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
+	-- Aim.FOV is degrees of screen half-width (same scale GetTarget uses)
+	circle.Radius = (vp.X / 2) * (math.clamp(Aim.FOV, 1, 360) / 180)
+	circle.Color = Aim.FovColor
+	circle.Thickness = Aim.FovThickness
+end
+
+local defaultCameraFov = nil
+local function applyCameraFov()
+	if not Camera then return end
+	if defaultCameraFov == nil then
+		defaultCameraFov = Camera.FieldOfView
+	end
+	if Aim.UseCameraFov then
+		Camera.FieldOfView = math.clamp(Aim.CameraFov, 30, 120)
+	elseif Camera.FieldOfView ~= defaultCameraFov then
+		-- restore only if we previously changed it
+		if math.abs(Camera.FieldOfView - math.clamp(Aim.CameraFov, 30, 120)) < 0.01 then
+			Camera.FieldOfView = defaultCameraFov
+		end
+	end
+end
+
+function Aim.SetAimEnabled(on)
+	Aim.Enabled = on and true or false
+	Aim.AimKeyActive = Aim.Enabled
+	if not Aim.Enabled then
+		Aim.Target = nil
+		if fovCircle then fovCircle.Visible = false end
+		if Aim.UseCameraFov and Camera then
+			-- leave camera fov as-is until user disables UseCameraFov
+		end
+	end
+end
+
+function Aim.ToggleAim()
+	Aim.SetAimEnabled(not Aim.Enabled)
+	return Aim.Enabled
+end
+
+-- Accepts Enum.KeyCode.* or Enum.UserInputType.* (side buttons = MouseBackButton / M4 names)
+function Aim.SetAimKey(key)
+	Aim.AimKey = key
+end
+
+local SIDE_BUTTON_NAMES = {
+	MouseButton4 = true,
+	MouseButton5 = true,
+	MouseBackButton = true,
+	MouseForwardButton = true,
+	MouseX1 = true,
+	MouseX2 = true,
+}
+
+local function isAimKeyInput(input)
+	if not input then return false end
+	local k = Aim.AimKey
+	if k and (input.KeyCode == k or input.UserInputType == k) then
+		return true
+	end
+	-- side buttons may arrive under names the enum table doesn't list
+	local ut = tostring(input.UserInputType):gsub("Enum%.UserInputType%.", "")
+	local kc = tostring(input.KeyCode):gsub("Enum%.KeyCode%.", "")
+	if SIDE_BUTTON_NAMES[ut] or SIDE_BUTTON_NAMES[kc] then
+		-- only treat as aim key if user bound a side/mouse key (or default back button)
+		local bound = tostring(k or "")
+		if bound:find("Mouse") or bound:find("MouseButton") then
+			return true
+		end
+		-- if bound key is MouseBackButton, match any side-button name too
+		if bound:find("MouseBack") and (SIDE_BUTTON_NAMES[ut] or SIDE_BUTTON_NAMES[kc]) then
+			return true
+		end
+	end
+	return false
+end
+
+local UIS = UserInputService
+UIS.InputBegan:Connect(function(input, gameProcessed)
+	if not Aim.UseBuiltinAimKey then return end
+	if gameProcessed then return end
+	if not isAimKeyInput(input) then return end
+	if Aim.AimKeyMode == "Hold" then
+		Aim.SetAimEnabled(true)
+	else
+		Aim.ToggleAim()
+	end
+end)
+
+UIS.InputEnded:Connect(function(input)
+	if not Aim.UseBuiltinAimKey then return end
+	if Aim.AimKeyMode ~= "Hold" then return end
+	if isAimKeyInput(input) then
+		Aim.SetAimEnabled(false)
+	end
+end)
+
 -- Silent aim: game combat reads Mouse.Hit / Mouse.Target (ClientControl MH)
 local hooksInstalled = false
 local oldIndex
@@ -196,8 +333,9 @@ local function installMouseHook()
 end
 
 RunService.RenderStepped:Connect(function(dt)
+	Camera = Workspace.CurrentCamera
+	pcall(applyCameraFov)
 	if Aim.Enabled then
-		Camera = Workspace.CurrentCamera
 		local ok, err = pcall(Aim.GetTarget)
 		if not ok then
 			Aim.Target = nil
@@ -210,6 +348,7 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 		end
 	end
+	pcall(updateFovCircle)
 end)
 
 -- Re-resolve camera after respawn/teleport

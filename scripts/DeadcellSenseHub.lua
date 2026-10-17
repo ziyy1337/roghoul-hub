@@ -11,6 +11,7 @@ local Sense = loadstring(game:HttpGet(RAW .. "scripts/esp/Sense/source.lua"))()
 
 -- 3) Silent + camera aim
 local Aim = loadstring(game:HttpGet(RAW .. "scripts/Aimbot.lua"))()
+Aim.UseBuiltinAimKey = false -- menu keybind owns aim toggle (supports Mouse4/5)
 
 -- Sense defaults: enemies on with a solid legit set
 local enemy = Sense.teamSettings.enemy
@@ -148,7 +149,7 @@ aim:new_toggle({
 	name = "Aim Enabled",
 	flag = "aim_enabled",
 	state = false,
-	callback = function(state) Aim.Enabled = state end,
+	callback = function(state) Aim.SetAimEnabled(state) end,
 })
 
 aim:new_toggle({
@@ -188,6 +189,36 @@ aim:new_slider({
 	callback = function(value) Aim.FOV = value end,
 })
 
+aim:new_toggle({
+	name = "Show FOV Circle",
+	flag = "aim_fov_circle",
+	state = true,
+	callback = function(state) Aim.ShowFov = state end,
+})
+
+aim:new_colorpicker({
+	name = "FOV Circle Color",
+	flag = "aim_fov_color",
+	default = Aim.FovColor,
+	callback = function(color) Aim.FovColor = color end,
+})
+
+aim:new_toggle({
+	name = "Use Camera FOV",
+	flag = "cam_fov_on",
+	state = false,
+	callback = function(state) Aim.UseCameraFov = state end,
+})
+
+aim:new_slider({
+	name = "Camera FOV",
+	flag = "cam_fov",
+	min = 30,
+	max = 120,
+	default = 70,
+	callback = function(value) Aim.CameraFov = value end,
+})
+
 aim:new_slider({
 	name = "Camera Smoothness",
 	flag = "aim_smooth",
@@ -206,6 +237,27 @@ aim:new_dropdown({
 	callback = function(value) Aim.Bone = value end,
 })
 
+aim:new_keybind({
+	name = "Aim Keybind (side buttons OK)",
+	flag = "aim_keybind",
+	default = Enum.KeyCode.MouseBackButton,
+	mode = "Toggle",
+	ignore = true,
+	callback = function(state)
+		Aim.SetAimEnabled(state == true)
+	end,
+})
+
+aim:new_dropdown({
+	name = "Aim Key Mode",
+	flag = "aim_key_mode",
+	options = { "Toggle", "Hold" },
+	default = "Toggle",
+	callback = function(value)
+		Aim.AimKeyMode = value
+	end,
+})
+
 aim:new_button({
 	name = "Face Target Once",
 	flag = "aim_face_once",
@@ -217,7 +269,23 @@ aim:new_button({
 
 local settings = window:new_page({ name = "Settings" })
 local menu = settings:new_section({ name = "Menu", size = "Half" })
-menu:new_keybind({ name = "Menu Keybind", flag = "menu_bind" })
+menu:new_keybind({
+	name = "Open / Close Menu",
+	flag = "menu_bind",
+	default = Enum.KeyCode.Insert,
+	mode = "Toggle",
+	ignore = true,
+	callback = function()
+		library:Close()
+	end,
+})
+menu:new_button({
+	name = "Toggle Menu Now",
+	flag = "menu_toggle_btn",
+	callback = function()
+		library:Close()
+	end,
+})
 menu:new_toggle({
 	name = "Show Keybinds List",
 	flag = "keybind_list",

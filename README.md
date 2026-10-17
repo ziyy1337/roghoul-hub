@@ -49,7 +49,8 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ziyy1337/roghoul-hub/
 ```
 
 - **Visuals:** box, name, health, distance, tracers, chams, arrows
-- **Combat:** silent aim (hooks `Mouse.Hit` — Ro-Ghoul attacks read that), camera aim, FOV, smoothness, bone, team/wall check
+- **Combat:** silent aim (hooks `Mouse.Hit` — Ro-Ghoul attacks read that), camera aim, aim FOV circle, camera FOV changer, FOV/smoothness/bone, team/wall check
+- **Keybinds:** aim toggle (default **Mouse Back / side button**, rebind in menu), menu open/close (**Insert** or “Toggle Menu Now”)
 
 ## Minimal menu
 

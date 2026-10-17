@@ -1371,7 +1371,9 @@ local keys = {
     [Enum.KeyCode.Backquote] = "`",
     [Enum.UserInputType.MouseButton1] = "MouseButton1",
     [Enum.UserInputType.MouseButton2] = "MouseButton2",
-    [Enum.UserInputType.MouseButton3] = "MouseButton3"
+    [Enum.UserInputType.MouseButton3] = "MouseButton3",
+    [Enum.KeyCode.MouseBackButton] = "Mouse Back (side)",
+    [Enum.KeyCode.MouseMiddleButton] = "Mouse Middle"
 }
 -- // UI START
 function library:load_config(cfg_name)

@@ -1372,7 +1372,9 @@ local keys = {
     [Enum.KeyCode.Backquote] = "`",
     [Enum.UserInputType.MouseButton1] = "MouseButton1",
     [Enum.UserInputType.MouseButton2] = "MouseButton2",
-    [Enum.UserInputType.MouseButton3] = "MouseButton3"
+    [Enum.UserInputType.MouseButton3] = "MouseButton3",
+    [Enum.KeyCode.MouseBackButton] = "Mouse Back (side)",
+    [Enum.KeyCode.MouseMiddleButton] = "Mouse Middle"
 }
 -- // UI START
 function library:load_config(cfg_name)
@@ -2034,7 +2036,15 @@ function library:new_window(cfg)
                         keytext.Text = "..."
                         
                         binding = utility.connect(services.InputService.InputBegan, function(input, gpe)
-                            set(input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode or input.UserInputType)
+                            set((function()
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        return input.KeyCode
+    end
+    if input.KeyCode and input.KeyCode ~= Enum.KeyCode.Unknown and tostring(input.KeyCode.Name):find("Mouse") then
+        return input.KeyCode
+    end
+    return input.UserInputType
+end)())
                             utility.disconnect(binding)
                             task.wait()
                             binding = nil
@@ -2830,7 +2840,15 @@ function library:new_window(cfg)
                             keytext.Text = "..."
                             
                             binding = utility.connect(services.InputService.InputBegan, function(input, gpe)
-                                set(input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode or input.UserInputType)
+                                set((function()
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        return input.KeyCode
+    end
+    if input.KeyCode and input.KeyCode ~= Enum.KeyCode.Unknown and tostring(input.KeyCode.Name):find("Mouse") then
+        return input.KeyCode
+    end
+    return input.UserInputType
+end)())
                                 utility.disconnect(binding)
                                 task.wait()
                                 binding = nil

@@ -27,11 +27,17 @@ Local backup of the **Deadcell** Roblox UI library from [GhostDuckyy/UI-Librarie
 
 ## Load
 
+All external URLs now point at **this repo** (`ziyy1337/roghoul-hub`), not GhostDuckyy / vozoid.
+
 ```lua
-local library = loadstring(game:HttpGet("https://github.com/GhostDuckyy/UI-Libraries/blob/main/DEADCELL%20REMAKE/Modified/source.lua?raw=true"))()
+-- preferred (modified: uses bxor for assets)
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/Deadcell/source_modified.lua"))()
+
+-- or the main remake
+-- local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/Deadcell/source.lua"))()
 ```
 
-Or load from a local/hosted copy of `Deadcell/source_modified.lua` if the GitHub URL dies.
+Originals with the old GhostDuckyy/vozoid URLs are kept under `Deadcell/backup/*ORIGINAL*`.
 
 ## Minimal menu
 

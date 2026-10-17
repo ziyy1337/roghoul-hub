@@ -4,9 +4,9 @@ local settings = {
     default_accent = Color3.fromRGB(61, 100, 227); -- also stupid shit
 };
 
-local drawing = loadstring(game:HttpGet("https://github.com/GhostDuckyy/UI-Libraries/blob/main/DEADCELL%20REMAKE/misc/extension.lua?raw=true"))();
-local tween = loadstring(game:HttpGet("https://raw.githubusercontent.com/vozoid/utility/main/Tween.lua"))()
-local bxor = loadstring(game:HttpGet('https://github.com/GhostDuckyy/GhostDuckyy/blob/main/Tool/bxor.lua?raw=true'))()
+local drawing = loadstring(game:HttpGet("https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/Deadcell/deps/extension.lua"))();
+local tween = loadstring(game:HttpGet("https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/Deadcell/deps/Tween_selfcontained.lua"))()
+local bxor = loadstring(game:HttpGet('https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/Deadcell/deps/bxor.lua'))()
 
 -- // UI LIBRARY
 if not isfolder(settings.folder_name) then
@@ -16,10 +16,10 @@ if not isfolder(settings.folder_name) then
 end;
 
 local images = {
-    ['gradient90'] = "https://raw.githubusercontent.com/portallol/luna/main/Gradient.png";
-    ['gradient180'] = "https://raw.githubusercontent.com/portallol/luna/main/Gradient180.png";
-    ['arrow_down'] = "https://i.imgur.com/tVqy0nL.png";
-    ['arrow_up'] = "https://i.imgur.com/SL9cbQp.png";
+    ['gradient90'] = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/Deadcell/deps/assets/Gradient.png";
+    ['gradient180'] = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/Deadcell/deps/assets/Gradient180.png";
+    ['arrow_down'] = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/Deadcell/deps/assets/arrow_down.png";
+    ['arrow_up'] = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/Deadcell/deps/assets/arrow_up.png";
 }
 for i,v in next, images do
     if not isfile(settings.folder_name..'/assets/'..i..'.ln') then

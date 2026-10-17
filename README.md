@@ -40,6 +40,14 @@ local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/ziyy1
 
 Originals with the old GhostDuckyy/vozoid URLs are kept under `Deadcell/backup/*ORIGINAL*`.
 
+## Hub + ESP
+
+Deadcell menu with Sense ESP on a Visuals page:
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/scripts/DeadcellSenseHub.lua"))()
+```
+
 ## Minimal menu
 
 ```lua

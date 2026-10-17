@@ -18,6 +18,7 @@ Local backup of the **Deadcell** Roblox UI library from [GhostDuckyy/UI-Librarie
 | Path | What it is |
 |---|---|
 | `Deadcell/source.lua` | Main library (REMAKE) |
+| `Deadcell/deps/` | External Lua deps + assets (extension, tween, bxor, etc.) — see `Deadcell/deps/README.md` |
 | `Deadcell/source_modified.lua` | Modified fallback variant |
 | `Deadcell/backup/` | Timestamped copies of both sources |
 | `Deadcell/Example` | Example menu from Eazvy/UILibs |

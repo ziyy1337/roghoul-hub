@@ -6,6 +6,7 @@ local Sense = loadstring(game:HttpGet(RAW .. "scripts/esp/Sense/source.lua"))()
 local NpcEsp = loadstring(game:HttpGet(RAW .. "scripts/esp/NpcEsp.lua"))()
 local GyakuEsp = loadstring(game:HttpGet(RAW .. "scripts/GyakusatsuHeartESP.lua"))()
 local Aim = loadstring(game:HttpGet(RAW .. "scripts/Aimbot.lua"))()
+local Farm = loadstring(game:HttpGet(RAW .. "scripts/Autofarm.lua"))()
 
 Aim.UseBuiltinAimKey = false
 Aim.Enabled = false
@@ -314,10 +315,32 @@ feel:new_slider({
 local farm = window:new_page({ name = "Autofarm" })
 
 local farmMain = farm:new_section({ name = "General", size = "Fill" })
-farmMain:new_toggle({ name = "Autofarm Enabled", flag = "farm_enabled", state = false, callback = function() end })
-farmMain:new_toggle({ name = "Auto Attack", flag = "farm_attack", state = false, callback = function() end })
-farmMain:new_toggle({ name = "Auto Collect", flag = "farm_collect", state = false, callback = function() end })
-farmMain:new_toggle({ name = "Auto Respawn / Return", flag = "farm_respawn", state = false, callback = function() end })
+farmMain:new_toggle({
+	name = "Autofarm Enabled",
+	flag = "farm_enabled",
+	state = false,
+	callback = function(s)
+		if s then Farm.Start() else Farm.Stop() end
+	end,
+})
+farmMain:new_toggle({
+	name = "Auto Attack",
+	flag = "farm_attack",
+	state = false,
+	callback = function(s) Farm.AutoAttack = s end,
+})
+farmMain:new_toggle({
+	name = "Auto Collect",
+	flag = "farm_collect",
+	state = false,
+	callback = function(s) Farm.AutoCollect = s end,
+})
+farmMain:new_toggle({
+	name = "Auto Respawn / Return",
+	flag = "farm_respawn",
+	state = false,
+	callback = function(s) Farm.AutoRespawn = s end,
+})
 farmMain:new_slider({
 	name = "Farm Delay (sec)",
 	flag = "farm_delay",
@@ -325,9 +348,16 @@ farmMain:new_slider({
 	max = 100,
 	default = 20,
 	text = "[value]/10s",
-	callback = function() end,
+	callback = function(v) Farm.FarmDelay = v / 10 end,
 })
-farmMain:new_button({ name = "Stop Farm (placeholder)", flag = "farm_stop", callback = function() end })
+farmMain:new_button({
+	name = "Stop Farm",
+	flag = "farm_stop",
+	callback = function()
+		Farm.Stop()
+		library.flags.farm_enabled = false
+	end,
+})
 
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })
 farmTarget:new_dropdown({
@@ -335,18 +365,33 @@ farmTarget:new_dropdown({
 	flag = "farm_group",
 	options = { "Human", "Ghoul", "CCG", "Aggro", "Boss", "Gyakusatsu", "Any" },
 	default = "Ghoul",
-	callback = function() end,
+	callback = function(v) Farm.Group = v end,
 })
-farmTarget:new_toggle({ name = "Prefer Nearest", flag = "farm_nearest", state = true, callback = function() end })
-farmTarget:new_toggle({ name = "Prefer Lowest HP", flag = "farm_lowhp", state = false, callback = function() end })
-farmTarget:new_toggle({ name = "Ignore Players", flag = "farm_noplayers", state = true, callback = function() end })
+farmTarget:new_toggle({
+	name = "Prefer Nearest",
+	flag = "farm_nearest",
+	state = true,
+	callback = function(s) Farm.PreferNearest = s end,
+})
+farmTarget:new_toggle({
+	name = "Prefer Lowest HP",
+	flag = "farm_lowhp",
+	state = false,
+	callback = function(s) Farm.PreferLowestHP = s end,
+})
+farmTarget:new_toggle({
+	name = "Ignore Players",
+	flag = "farm_noplayers",
+	state = true,
+	callback = function(s) Farm.IgnorePlayers = s end,
+})
 farmTarget:new_slider({
 	name = "Max Farm Distance",
 	flag = "farm_dist",
 	min = 50,
 	max = 5000,
 	default = 800,
-	callback = function() end,
+	callback = function(v) Farm.MaxDistance = v end,
 })
 
 local farmLoadout = farm:new_section({ name = "Loadout", size = 260 })
@@ -355,39 +400,79 @@ farmLoadout:new_dropdown({
 	flag = "farm_kagune_stage",
 	options = { "None", "Stage 1", "Stage 2", "Stage 3", "Stage 4" },
 	default = "None",
-	callback = function() end,
+	callback = function(v) Farm.KaguneStage = v end,
 })
-farmLoadout:new_toggle({ name = "Auto Equip Kagune", flag = "farm_equip_kagune", state = false, callback = function() end })
+farmLoadout:new_toggle({
+	name = "Auto Equip Kagune",
+	flag = "farm_equip_kagune",
+	state = false,
+	callback = function(s) Farm.AutoEquipKagune = s end,
+})
 farmLoadout:new_dropdown({
 	name = "Quinque",
 	flag = "farm_quinque",
-	options = { "None", "Kakuja", "Kagune Quinque", "CCG Isshin", "Custom" },
+	options = { "None", "Kakuja", "Kagune Quinque", "CCG Isshin", "Custom", "C-Katana", "Scorpion 1/56", "IXA" },
 	default = "None",
-	callback = function() end,
+	callback = function(v) Farm.Quinque = v end,
 })
-farmLoadout:new_toggle({ name = "Auto Equip Quinque", flag = "farm_equip_quinque", state = false, callback = function() end })
+farmLoadout:new_toggle({
+	name = "Auto Equip Quinque",
+	flag = "farm_equip_quinque",
+	state = false,
+	callback = function(s) Farm.AutoEquipQuinque = s end,
+})
 farmLoadout:new_dropdown({
 	name = "RC / Form",
 	flag = "farm_rc",
 	options = { "Default", "Low RC", "Mid RC", "High RC" },
 	default = "Default",
-	callback = function() end,
+	callback = function(v) Farm.RCForm = v end,
 })
 
-local farmMisc = farm:new_section({ name = "Extras (placeholder)", size = 260, side = "right" })
-farmMisc:new_toggle({ name = "Auto Kagune Toggle", flag = "farm_kagune_tog", state = false, callback = function() end })
-farmMisc:new_toggle({ name = "Auto Quinque Swap", flag = "farm_quinque_swap", state = false, callback = function() end })
-farmMisc:new_toggle({ name = "Auto Heart Pickup", flag = "farm_hearts", state = false, callback = function() end })
-farmMisc:new_toggle({ name = "Auto Dissect (Gyakusatsu)", flag = "farm_dissect", state = false, callback = function() end })
+local farmMisc = farm:new_section({ name = "Extras", size = 260, side = "right" })
+farmMisc:new_toggle({
+	name = "Auto Kagune Toggle",
+	flag = "farm_kagune_tog",
+	state = false,
+	callback = function(s) Farm.AutoKaguneToggle = s end,
+})
+farmMisc:new_toggle({
+	name = "Auto Quinque Swap",
+	flag = "farm_quinque_swap",
+	state = false,
+	callback = function(s) Farm.AutoQuinqueSwap = s end,
+})
+farmMisc:new_toggle({
+	name = "Auto Heart Pickup",
+	flag = "farm_hearts",
+	state = false,
+	callback = function(s) Farm.AutoHeartPickup = s end,
+})
+farmMisc:new_toggle({
+	name = "Auto Dissect (Gyakusatsu)",
+	flag = "farm_dissect",
+	state = false,
+	callback = function(s) Farm.AutoDissect = s end,
+})
 farmMisc:new_dropdown({
 	name = "Farm Mode",
 	flag = "farm_mode",
 	options = { "NPC Grind", "Boss Only", "Hearts / Events", "RC Farm" },
 	default = "NPC Grind",
-	callback = function() end,
+	callback = function(v) Farm.FarmMode = v end,
 })
-farmMisc:new_button({ name = "Apply Loadout (placeholder)", flag = "farm_apply", callback = function() end })
-farmMisc:new_button({ name = "Reset Placeholders", flag = "farm_reset", callback = function() end })
+farmMisc:new_button({
+	name = "Apply Loadout Now",
+	flag = "farm_apply",
+	callback = function() Farm.ApplyLoadoutNow() end,
+})
+farmMisc:new_button({
+	name = "Print Farm Status",
+	flag = "farm_status",
+	callback = function()
+		print("[Autofarm]", Farm.Status())
+	end,
+})
 
 ----------------------------------------------------------------
 -- SETTINGS
@@ -421,4 +506,4 @@ menu:new_toggle({
 
 pcall(function() Sense.Load() end)
 
-return library, Sense, NpcEsp, GyakuEsp, Aim
+return library, Sense, NpcEsp, GyakuEsp, Aim, Farm

@@ -57,6 +57,8 @@ local Farm = {
 	LastRange = 0,
 	LastEquip = 0,
 	LastCashout = 0,
+	LastRefill = 0,
+	_baseWalkSpeed = 48,
 	Stats = { attacks = 0, collects = 0, kills = 0 },
 	AvailableStages = {},
 	RemoteKey = nil,
@@ -113,22 +115,23 @@ local function MH()
 end
 
 local function getAuthKey()
-	if Farm.RemoteKey and #Farm.RemoteKey >= 50 then
+	if Farm.RemoteKey and #Farm.RemoteKey >= 100 then
 		return Farm.RemoteKey
 	end
-	-- try grab from ClientControl constants (z4gs method)
-	local ok = pcall(function()
-		if not GetGc or not GetConstants then return end
-		for _, v in pairs(GetGc(true)) do
+	-- exact working.lua key grabber
+	pcall(function()
+		if not getgc or not getconstants or not getconstant then return end
+		for _, v in pairs(getgc(true)) do
 			if type(v) == "function" then
 				local info = getinfo and getinfo(v)
-				if info and info.source and info.source:find("ClientControl") then
-					local constants = GetConstants(v)
-					for i, c in ipairs(constants) do
-						if c == "KeyEvent" then
-							local found = constants[i + 1]
-							if type(found) == "string" and #found >= 50 then
-								Farm.RemoteKey = found
+				local src = info and info.source or (debug and debug.getinfo and debug.getinfo(v, "s").source)
+				if src and tostring(src):find(".ClientControl") then
+					local constants = getconstants(v)
+					for i2, v2 in pairs(constants) do
+						if v2 == "KeyEvent" then
+							local keyfound = getconstant(v, i2 + 1)
+							if type(keyfound) == "string" and #keyfound >= 100 then
+								Farm.RemoteKey = keyfound
 								return
 							end
 						end
@@ -241,21 +244,31 @@ local function setNoclip(on)
 	elseif not on and Farm._noclipConn then
 		Farm._noclipConn:Disconnect()
 		Farm._noclipConn = nil
+		-- restore collision on stop
+		local c = LocalPlayer.Character
+		if c then
+			for _, p in ipairs(c:GetChildren()) do
+				if p:IsA("BasePart") then
+					p.CanCollide = true
+				end
+			end
+		end
 	end
 end
 
--- Hide HRP CFrame spam from simple GetChildren scans while we teleport
+-- Hide HRP CFrame spam; ALWAYS re-enable listeners (fixes noclip leak)
 local function withStealth(fn)
 	if not Farm.Noclip then
 		return fn()
 	end
-	local protected = {}
 	local hidden = {}
-	pcall(function()
+	local decoy
+	local ok, err = pcall(function()
 		local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not hrp then return fn() end
-		-- random decoy part parented near character, name-guessed off lists
-		local decoy = Instance.new("Part")
+		if not hrp then
+			error("no hrp")
+		end
+		decoy = Instance.new("Part")
 		decoy.Name = string.rep("z", math.random(6, 10))
 		decoy.Size = Vector3.new(0.05, 0.05, 0.05)
 		decoy.Transparency = 1
@@ -263,9 +276,7 @@ local function withStealth(fn)
 		decoy.CanCollide = false
 		decoy.CFrame = hrp.CFrame
 		decoy.Parent = workspace
-		table.insert(protected, decoy)
 
-		-- disable ChildAdded watchers briefly while we move (anti-detect pattern)
 		for _, signal in ipairs({ workspace.ChildAdded, workspace.DescendantAdded }) do
 			pcall(function()
 				for _, conn in ipairs(getconnections(signal)) do
@@ -276,19 +287,25 @@ local function withStealth(fn)
 				end
 			end)
 		end
-
-		local result = fn()
-
-		for _, conn in ipairs(hidden) do
-			pcall(function() conn:Enable() end)
-		end
-		for _, obj in ipairs(protected) do
-			pcall(function() obj:Destroy() end)
-		end
-		return result
 	end)
-	-- fallback if pcall setup failed
-	return fn()
+
+	local result
+	if ok then
+		result = fn()
+	end
+
+	-- always restore
+	for _, conn in ipairs(hidden) do
+		pcall(function() conn:Enable() end)
+	end
+	if decoy then
+		pcall(function() decoy:Destroy() end)
+	end
+
+	if not ok then
+		return fn()
+	end
+	return result
 end
 
 -- ===================== teleport — exact working.lua fly method =====================
@@ -363,7 +380,7 @@ end
 
 local function ensureMask()
 	if not Farm.AutoMask then return end
-	if tick() - Farm.LastMask < 4 then return end
+	if tick() - Farm.LastMask < 1 then return end
 	local folder = pf()
 	local mask = folder and folder:FindFirstChild("Mask")
 	if mask and mask.Value then
@@ -376,14 +393,24 @@ end
 
 local function ensureArata()
 	if not Farm.AutoArata then return end
-	if tick() - Farm.LastArata < 4 then return end
+	if tick() - Farm.LastArata < 1 then return end
 	local sc = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("ServerControl")
 	local arataOn = sc and sc:FindFirstChild("ArataOn")
 	if arataOn and arataOn.Value then
 		Farm.LastArata = tick()
+		-- refill: Stam empty while open — do NOT tap Zero (closes). Try bonus key C as refill probe only if C is Ready and not used for AttackC
+		if Farm.AutoArataRefill then
+			local folder = pf()
+			local stam = folder and folder.ArataStat and folder.ArataStat:FindFirstChild("Stam")
+			local empty = stam and tostring(stam.Value) == ""
+			if empty and not Farm.AttackC and readyCD("SpecialBonusCD") and tick() - (Farm.LastRefill or 0) > 5 then
+				pressKey("C")
+				Farm.LastRefill = tick()
+			end
+		end
 		return
 	end
-	-- KeyCode.Zero -> KeyEvent name "Zero" (not "0")
+	-- KeyCode.Zero -> KeyEvent name "Zero"
 	pressKey("Zero")
 	Farm.LastArata = tick()
 end
@@ -482,20 +509,26 @@ local function findTarget()
 end
 
 local function collectCorpse(npc)
-	-- exact working.lua collect pattern
-	if not npc then return end
+	-- VERBATIM working.lua collect()
 	local timer = tick()
+	if not npc then return false end
 
-	-- corpse is often a sibling: "NPCName Corpse"
-	local model = nil
+	local model
 	pcall(function()
-		model = npc:WaitForChild(npc.Name .. " Corpse", 1.5)
+		model = npc:WaitForChild(npc.Name .. " Corpse", 2)
 	end)
 	if not model or not model.Parent then
 		model = workspace:FindFirstChild(npc.Name .. " Corpse")
 	end
 	if not model then
-		for _, d in ipairs(workspace:GetDescendants()) do
+		-- also try parent folder
+		local parent = npc.Parent
+		if parent then
+			model = parent:FindFirstChild(npc.Name .. " Corpse")
+		end
+	end
+	if not model then
+		for _, d in ipairs(Workspace:GetDescendants()) do
 			if d:IsA("Model") and d.Name == npc.Name .. " Corpse" then
 				model = d
 				break
@@ -507,7 +540,7 @@ local function collectCorpse(npc)
 	local clickpart = model:FindFirstChild("ClickPart")
 	if not clickpart then
 		pcall(function()
-			clickpart = model:WaitForChild("ClickPart", 1.5)
+			clickpart = model:WaitForChild("ClickPart", 2)
 		end)
 	end
 	if not clickpart then return false end
@@ -515,17 +548,13 @@ local function collectCorpse(npc)
 	local c, hrp, hum = character()
 	if not hrp or not hum then return false end
 
-	-- sit on the click part like working.lua
 	hrp.CFrame = clickpart.CFrame * CFrame.new(0, 1.7, 0)
 
-	-- working.lua uses unnamed child ClickDetector: clickpart[""]
 	local unnamed
 	pcall(function()
 		unnamed = clickpart:WaitForChild("", 1)
 	end)
-	if not unnamed then
-		unnamed = clickpart:FindFirstChild("")
-	end
+	unnamed = unnamed or clickpart:FindFirstChild("")
 
 	repeat
 		if tick() - timer > 4 then
@@ -533,9 +562,6 @@ local function collectCorpse(npc)
 		end
 		local ch = LocalPlayer.Character
 		if not ch or not ch:FindFirstChild("Humanoid") or ch.Humanoid.Health <= 0 then
-			break
-		end
-		if not model.Parent then
 			break
 		end
 		pcall(function()
@@ -549,33 +575,44 @@ local function collectCorpse(npc)
 		else
 			pcall(function()
 				local cd = clickpart:FindFirstChildOfClass("ClickDetector")
-				if cd then
-					cd:MouseClick()
-				end
+				if cd then cd:MouseClick() end
 			end)
 		end
 		Farm.Stats.collects += 1
 	until not model.Parent or not model:FindFirstChild("ClickPart") or not Farm.Enabled
+		or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") and LocalPlayer.Character.Humanoid.Health <= 0)
 
 	return true
 end
 
 -- ===================== attack =====================
+local function attackHitCFrame(targetPos)
+	-- Mouse.Hit style: surface point under the cursor, oriented like the camera
+	local cam = Workspace.CurrentCamera
+	if not cam then
+		return CFrame.lookAt(targetPos, targetPos + Vector3.new(0, 0, -1))
+	end
+	local camCF = cam.CFrame
+	return CFrame.new(targetPos) * (camCF - camCF.Position)
+end
+
 local function attackOnce(target)
 	if not canAct() then return false end
 	local hrpPart = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
 	if not hrpPart then return false end
-	local _, myHrp = character()
+	local c, myHrp, hum = character()
 	if not myHrp then return false end
 
-	-- silent: aim Mouse.Hit at target (hook spoofs Hit; camera untouched)
-	local hit = CFrame.lookAt(hrpPart.Position, Workspace.CurrentCamera.CFrame.Position)
+	local hit = attackHitCFrame(hrpPart.Position)
 
-	-- working.lua kill position:
-	-- HRP.CFrame = npc.HRP.CFrame + npc.HRP.CFrame.lookVector * DistanceFromNpc
-	if not Farm.RangeMode then
-		myHrp.CFrame = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
+	-- glue character (working.lua) — both modes keep position; range keeps standoff
+	local dest
+	if Farm.RangeMode then
+		dest = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(math.max(Farm.DistanceFromNpc, 12)))
+	else
+		dest = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
 	end
+	myHrp.CFrame = dest
 
 	pressKey("Mouse1", hit)
 	Farm.LastAttack = tick()
@@ -590,7 +627,6 @@ local function attackOnce(target)
 		return false
 	end
 
-	-- E/R/F/C only if each toggle is on (Mouse1 always)
 	if Farm.AttackE then trySpecial("E", "Special1CD", 1.0) end
 	if Farm.AttackR then trySpecial("R", "Special2CD", 2.0) end
 	if Farm.AttackF then trySpecial("F", "Special3CD", 3.0) end
@@ -609,6 +645,21 @@ local function stop()
 		task.cancel(Farm._task)
 		Farm._task = nil
 	end
+	-- restore movement + collision
+	local c, hrp, hum = character()
+	if hum then
+		pcall(function()
+			hum.WalkSpeed = Farm._baseWalkSpeed or 48
+			hum.AutoRotate = true
+		end)
+	end
+	if c then
+		for _, p in ipairs(c:GetChildren()) do
+			if p:IsA("BasePart") then
+				p.CanCollide = true
+			end
+		end
+	end
 	print("[Autofarm] stopped", Farm.Status())
 end
 
@@ -621,33 +672,42 @@ local function loop()
 			continue
 		end
 
-		if tick() - lastApply > 1.5 then
+		-- lock player movement while farming (working.lua overwrites CFrame every frame)
+		if Farm._baseWalkSpeed == nil then
+			Farm._baseWalkSpeed = hum.WalkSpeed
+		end
+		if hum.WalkSpeed > 0 then
+			pcall(function()
+				hum.WalkSpeed = 0
+				hum.AutoRotate = false
+			end)
+		end
+
+		if tick() - lastApply > 1.0 then
 			lastApply = tick()
 			pcall(Farm.FetchStages)
 		end
 
+		-- order matches working.lua: equip → reputation → target → kill → corpse
 		pcall(ensureEquip)
 		pcall(ensureMask)
 		pcall(ensureArata)
 		pcall(ensureRangeAfterEquip)
 
-		-- corpse — working.lua collect on the dead NPC
+		if Farm.ReputationFarm or Farm.ReputationCashout then
+			local did, ret = pcall(reputationTick)
+			if did and ret then
+				task.wait(0.2)
+				continue
+			end
+		end
+
 		if Farm.CorpseNpc and Farm.CollectCorpses then
 			local npc = Farm.CorpseNpc
 			Farm.CorpseNpc = nil
-			if npc and npc.Parent then
-				pcall(collectCorpse, npc)
-			end
+			pcall(collectCorpse, npc)
 			task.wait(0.05)
 			continue
-		end
-
-		-- reputation / trainer side jobs (working.lua order inside farm loop)
-		if Farm.ReputationFarm or Farm.ReputationCashout then
-			if pcall(reputationTick) then
-				task.wait(0.5)
-				continue
-			end
 		end
 
 		local target = Farm.CurrentTarget
@@ -670,7 +730,6 @@ local function loop()
 		if target then
 			local part = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
 			if part then
-				-- working.lua approach: keep re-tp to lookVector offset while killing
 				local isBoss = (target.Name == "Gyakusatsu") or (target.Parent and target.Parent.Name == "GyakusatsuSpawn")
 				local dest
 				if isBoss then
@@ -682,11 +741,11 @@ local function loop()
 				local dist = (part.Position - hrp.Position).Magnitude
 				if dist > 20 then
 					teleportTo(dest)
-				elseif dist > 5 or tick() - Farm.LastAttack >= Farm.FarmDelay then
-					-- keep glued like z4gs kill loop
+				else
+					-- hard glue every frame (stops WASD from winning)
 					pcall(function()
 						local _, myHrp = character()
-						if myHrp and not Farm.RangeMode then
+						if myHrp then
 							myHrp.CFrame = dest
 						end
 					end)
@@ -710,11 +769,29 @@ function Farm.Start()
 	setNoclip(Farm.Noclip)
 	Farm._rangedOn = false
 	Farm.LastEquip = 0
+
+	-- open mask + arata immediately (no throttle wait)
+	Farm.LastMask = 0
+	Farm.LastArata = 0
+	if Farm.AutoMask then
+		pcall(ensureMask)
+	end
+	if Farm.AutoArata then
+		pcall(ensureArata)
+	end
+	pcall(ensureEquip)
+	if Farm.RangeMode then
+		task.delay(0.6, function()
+			if Farm.Enabled then pcall(ensureRangeAfterEquip) end
+		end)
+	end
+
 	Farm._task = task.spawn(function()
 		local ok, err = pcall(loop)
 		if not ok then
 			warn("[Autofarm] crashed:", err)
 			Farm.Enabled = false
+			pcall(stop)
 		end
 	end)
 	if Farm.AutoTrainer then
@@ -723,7 +800,8 @@ function Farm.Start()
 	print("[Autofarm] started | group=" .. tostring(Farm.Group)
 		.. " | stage=" .. tostring(Farm.Stage) .. "/" .. stageWord()
 		.. " | range=" .. tostring(Farm.RangeMode)
-		.. " | stages=" .. #Farm.AvailableStages)
+		.. " | mask=" .. tostring(Farm.AutoMask)
+		.. " | arata=" .. tostring(Farm.AutoArata))
 end
 
 function Farm.Stop()
@@ -948,14 +1026,27 @@ local function getQuest(typ)
 	end
 end
 
--- called from main loop — same order as working.lua farm while
+-- called from main loop — same condition as working.lua farm while
 local function reputationTick()
 	local folder = pf()
-	local cq = folder and folder:FindFirstChild("CurrentQuest")
+	if not folder then return false end
+	local cq = folder:FindFirstChild("CurrentQuest")
 	local complete = cq and cq:FindFirstChild("Complete")
-	local need = complete and complete:FindFirstChild("Aogiri Member")
+	local quest = complete and complete:FindFirstChild("Aogiri Member")
 
-	if Farm.ReputationFarm and (not need or (need.Value and need.Max and tonumber(need.Value) >= tonumber(need.Max.Value))) then
+	-- working.lua: not quest OR quest.Value >= quest.Max.Value
+	local missing = (quest == nil)
+	local done = false
+	if quest then
+		local ok = pcall(function()
+			done = tonumber(quest.Value) >= tonumber(quest.Max.Value)
+		end)
+		if not ok then
+			done = false
+		end
+	end
+
+	if Farm.ReputationFarm and (missing or done) then
 		getQuest(true)
 		return true
 	elseif Farm.ReputationCashout and tick() - Farm.LastCashout > 7200 then

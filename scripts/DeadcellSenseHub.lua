@@ -514,6 +514,20 @@ farmLoadout:new_dropdown({
 		if v == "None" then Farm.Stage = "" else Farm.Stage = v end
 	end,
 })
+farmLoadout:new_dropdown({
+	name = "Weapon Mode",
+	flag = "farm_wepmode",
+	options = { "Auto", "Blade", "Ranged" },
+	default = "Auto",
+	callback = function(v)
+		Farm.WeaponMode = v
+		if v == "Ranged" then
+			Farm.RangeMode = true
+		elseif v == "Blade" or v == "Auto" then
+			Farm.RangeMode = false
+		end
+	end,
+})
 farmLoadout:new_button({
 	name = "Refresh Stages",
 	flag = "farm_refresh_stages",

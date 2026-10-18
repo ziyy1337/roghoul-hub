@@ -30,14 +30,14 @@ local Farm = {
 
 	Quinque = "IXA", -- unused in UI; Stage drives equip
 	Stage = "One",         -- "One".."Six" (KeyEvent stage names)
-	WeaponMode = "Auto",   -- kept for API; UI uses RangeMode only
+	WeaponMode = "Auto",   -- Auto | Blade | Ranged (restored from old menu)
 
 	-- Attacks (Mouse1 always active)
 	AttackE = false,
 	AttackR = false,
 	AttackF = false,
 	AttackC = false,
-	RangeMode = false,
+	RangeMode = false,       -- forces Ranged; same as WeaponMode=Ranged
 	AutoArata = false,
 	AutoArataRefill = false,
 	AutoMask = false,
@@ -315,29 +315,52 @@ local function ensureEquip()
 	Farm.LastEquip = tick()
 end
 
-local function ensureRangeAfterEquip()
-	if not Farm.RangeMode then return end
-	if not hasEquip() then
-		return -- wait until kagune/quinque is on character
+local appliedMode = nil
+
+local function ensureWeaponMode()
+	-- restored from working Weapon Mode (Auto | Blade | Ranged)
+	if not hasEquip() then return end
+	local st = currentStageInfo()
+	local want = Farm.WeaponMode
+	if Farm.RangeMode then
+		want = "Ranged"
+	elseif want == "Auto" then
+		want = (st and (st.modes or 1) >= 2) and "Ranged" or "Blade"
 	end
-	if Farm._rangedOn then
-		return
-	end
-	-- press C once when weapon is out; only skip if C is on DownTime cooldown
+	if want == appliedMode then return end
 	if tick() - Farm.LastRange < 1 then return end
-	if not readyCD("SpecialBonusCD") then
-		-- still try every 3s in case CD child means something else
-		if tick() - Farm.LastRange < 3 then return end
+
+	-- only press C when actually changing form:
+	--  nil -> Ranged : press (enter range)
+	--  Ranged -> Blade : press (back to blade)
+	--  nil -> Blade : do nothing (already blade)
+	if want == "Ranged" and appliedMode ~= "Ranged" then
+		pressKey("C")
+	elseif want == "Blade" and appliedMode == "Ranged" then
+		pressKey("C")
 	end
-	pressKey("C")
-	Farm._rangedOn = true
+	appliedMode = want
 	Farm.LastRange = tick()
-	print("[Autofarm] ranged toggle C after equip")
+	Farm._rangedOn = (want == "Ranged")
+	print("[Autofarm] weapon mode -> " .. tostring(want))
+end
+
+local function ensureRangeAfterEquip()
+	-- keep RangeMode in sync with old behavior
+	if Farm.RangeMode and not Farm._rangedOn then
+		ensureWeaponMode()
+	elseif Farm.RangeMode then
+		-- if CD blipped, re-apply every 8s
+		if tick() - Farm.LastRange > 8 then
+			appliedMode = nil
+			ensureWeaponMode()
+		end
+	end
 end
 
 local function ensureMask()
 	if not Farm.AutoMask then return end
-	if tick() - Farm.LastMask < 1 then return end
+	if tick() - Farm.LastMask < 2 then return end
 	local folder = pf()
 	local mask = folder and folder:FindFirstChild("Mask")
 	if mask and mask.Value then
@@ -350,24 +373,22 @@ end
 
 local function ensureArata()
 	if not Farm.AutoArata then return end
-	if tick() - Farm.LastArata < 1 then return end
+	-- long cooldown prevents spam
+	if tick() - Farm.LastArata < 8 then return end
 	local sc = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("ServerControl")
 	local arataOn = sc and sc:FindFirstChild("ArataOn")
-	if arataOn and arataOn.Value then
-		Farm.LastArata = tick()
-		-- refill: Stam empty while open — do NOT tap Zero (closes). Try bonus key C as refill probe only if C is Ready and not used for AttackC
-		if Farm.AutoArataRefill then
-			local folder = pf()
-			local stam = folder and folder.ArataStat and folder.ArataStat:FindFirstChild("Stam")
-			local empty = stam and tostring(stam.Value) == ""
-			if empty and not Farm.AttackC and readyCD("SpecialBonusCD") and tick() - (Farm.LastRefill or 0) > 5 then
-				pressKey("C")
-				Farm.LastRefill = tick()
-			end
+	if arataOn then
+		if arataOn.Value then
+			-- already open — never tap Zero
+			Farm.LastArata = tick()
+			return
 		end
+		-- closed: open once
+		pressKey("Zero")
+		Farm.LastArata = tick()
 		return
 	end
-	-- KeyCode.Zero -> KeyEvent name "Zero"
+	-- no ArataOn flag: don't spam; try rarely
 	pressKey("Zero")
 	Farm.LastArata = tick()
 end
@@ -376,7 +397,9 @@ end
 local function onDeathReset()
 	Farm.CurrentTarget = nil
 	Farm.CorpseNpc = nil
+	Farm.CorpseName = nil
 	Farm._rangedOn = false
+	appliedMode = nil
 	Farm.LastEquip = 0
 	Farm.LastMask = 0
 	Farm.LastArata = 0
@@ -465,84 +488,85 @@ local function findTarget()
 	return best
 end
 
+local function isRangedNow()
+	if Farm.RangeMode or Farm.WeaponMode == "Ranged" then
+		return true
+	end
+	if Farm.WeaponMode == "Blade" then
+		return false
+	end
+	-- Auto
+	return Farm._rangedOn == true
+end
+
 local function collectCorpse(npc)
-	-- working.lua collect() — wait for "Name Corpse" under the NPC or its parent
+	-- fast search — give up in ~1s so farm doesn't stall on a missing corpse
 	local timer = tick()
 	if not npc then return false end
-	local npcName = npc.Name
+	local npcName = type(npc) == "table" and npc.Name or npc.Name
 
-	-- if handed a name-only stub, skip instance wait
-	local isStub = type(npc) == "table" and npc.Name ~= nil and npc.WaitForChild == nil
-	local npcName = npc.Name
-
-	local model
-	if not isStub then
-		pcall(function()
-			model = npc:WaitForChild(npcName .. " Corpse", 2)
-		end)
-		if (not model or not model.Parent) and npc.Parent then
-			pcall(function()
-				model = npc.Parent:WaitForChild(npcName .. " Corpse", 1)
-			end)
+	local function findCorpse()
+		local model
+		-- sibling/child "Name Corpse"
+		if type(npc) == "table" and npc.WaitForChild == nil then
+			model = workspace:FindFirstChild(npcName .. " Corpse")
+		else
+			pcall(function() model = npc:FindFirstChild(npcName .. " Corpse") end)
+			if (not model or not model.Parent) and type(npc) == "table" == false and npc.Parent then
+				model = npc.Parent:FindFirstChild(npcName .. " Corpse")
+			end
+			model = model or workspace:FindFirstChild(npcName .. " Corpse")
 		end
-	end
-	if not model or not model.Parent then
-		model = workspace:FindFirstChild(npcName .. " Corpse")
-	end
-	if not model and not isStub then
-		-- dead model itself may still hold ClickPart
-		model = (npc.FindFirstChild and npc:FindFirstChild("ClickPart")) and npc or nil
-	end
-	if not model then
-		for _, d in ipairs(Workspace:GetDescendants()) do
-			if d.Name == npcName .. " Corpse" or (d:IsA("Model") and d.Name == npcName) then
-				if d:FindFirstChild("ClickPart") or d:FindFirstChildWhichIsA("BasePart", true) then
+		if not model then
+			for _, d in ipairs(Workspace:GetDescendants()) do
+				if d.Name == npcName .. " Corpse" then
 					model = d
-					if d:FindFirstChild("ClickPart") then break end
+					break
 				end
 			end
+		end
+		return model
+	end
+
+	local model = findCorpse()
+	if not model then
+		-- poll up to 0.8s only
+		while tick() - timer < 0.8 and Farm.Enabled do
+			task.wait(0.1)
+			model = findCorpse()
+			if model then break end
 		end
 	end
 	if not model then return false end
 
 	local clickpart = model:FindFirstChild("ClickPart")
 	if not clickpart then
-		pcall(function()
-			clickpart = model:WaitForChild("ClickPart", 2)
-		end)
+		pcall(function() clickpart = model:WaitForChild("ClickPart", 0.5) end)
 	end
 	if not clickpart then return false end
 
 	local c, hrp, hum = character()
 	if not hrp or not hum then return false end
 
+	-- one snap to corpse, short click loop (max 2.5s)
 	hrp.CFrame = clickpart.CFrame * CFrame.new(0, 1.7, 0)
-
 	local prevWs = hum.WalkSpeed
 	pcall(function() hum.WalkSpeed = Farm._baseWalkSpeed or 48 end)
 
-	local unnamed
+	local unnamed = clickpart:FindFirstChild("")
 	pcall(function()
-		unnamed = clickpart:WaitForChild("", 1)
+		if not unnamed then unnamed = clickpart:WaitForChild("", 0.4) end
 	end)
-	unnamed = unnamed or clickpart:FindFirstChild("")
 
-	repeat
-		if tick() - timer > 4 then
-			break
-		end
+	local endT = tick() + 2.5
+	while tick() < endT and Farm.Enabled do
+		if not model.Parent or not model:FindFirstChild("ClickPart") then break end
 		local ch = LocalPlayer.Character
-		if not ch or not ch:FindFirstChild("Humanoid") or ch.Humanoid.Health <= 0 then
-			break
-		end
-		pcall(function()
-			ch.Humanoid:MoveTo(clickpart.Position)
-		end)
-		task.wait()
+		if not ch or not ch:FindFirstChild("Humanoid") or ch.Humanoid.Health <= 0 then break end
+		pcall(function() ch.Humanoid:MoveTo(clickpart.Position) end)
+		task.wait(0.12)
 		if unnamed then
-			pcall(function()
-				fireclickdetector(unnamed, 1)
-			end)
+			pcall(function() fireclickdetector(unnamed, 1) end)
 		else
 			pcall(function()
 				local cd = clickpart:FindFirstChildOfClass("ClickDetector")
@@ -550,8 +574,7 @@ local function collectCorpse(npc)
 			end)
 		end
 		Farm.Stats.collects += 1
-	until not model.Parent or not model:FindFirstChild("ClickPart") or not Farm.Enabled
-		or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") and LocalPlayer.Character.Humanoid.Health <= 0)
+	end
 
 	pcall(function()
 		local ch = LocalPlayer.Character
@@ -560,7 +583,6 @@ local function collectCorpse(npc)
 			h.WalkSpeed = 0
 		end
 	end)
-
 	return true
 end
 
@@ -584,9 +606,9 @@ local function attackOnce(target)
 
 	local hit = attackHitCFrame(hrpPart.Position)
 
-	-- glue character (working.lua) — both modes keep position; range keeps standoff
+	-- glue character (working.lua); ranged keeps standoff
 	local dest
-	if Farm.RangeMode then
+	if isRangedNow() then
 		dest = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(math.max(Farm.DistanceFromNpc, 12)))
 	else
 		dest = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
@@ -677,6 +699,7 @@ local function loop()
 		pcall(ensureEquip)
 		pcall(ensureMask)
 		pcall(ensureArata)
+		pcall(ensureWeaponMode)
 		pcall(ensureRangeAfterEquip)
 
 		if Farm.ReputationFarm or Farm.ReputationCashout then
@@ -738,7 +761,7 @@ local function loop()
 					-- hard glue every frame (stops WASD from winning)
 					pcall(function()
 						local _, myHrp = character()
-						if myHrp then
+						if myHrp and not isRangedNow() then
 							myHrp.CFrame = dest
 						end
 					end)
@@ -760,12 +783,14 @@ function Farm.Start()
 	Farm.FetchStages()
 	getAuthKey()
 	setNoclip(Farm.Noclip)
-	Farm._rangedOn = false
+Farm._rangedOn = false
+	appliedMode = nil
 	Farm.LastEquip = 0
 
 	-- open mask + arata immediately (no throttle wait)
 	Farm.LastMask = 0
 	Farm.LastArata = 0
+	Farm.LastRange = 0
 	if Farm.AutoMask then
 		pcall(ensureMask)
 	end
@@ -773,11 +798,13 @@ function Farm.Start()
 		pcall(ensureArata)
 	end
 	pcall(ensureEquip)
-	if Farm.RangeMode then
-		task.delay(0.6, function()
-			if Farm.Enabled then pcall(ensureRangeAfterEquip) end
-		end)
-	end
+	-- weapon mode / range after a short equip delay
+	task.delay(0.7, function()
+		if Farm.Enabled then
+			pcall(ensureEquip)
+			pcall(ensureWeaponMode)
+		end
+	end)
 
 	Farm._task = task.spawn(function()
 		local ok, err = pcall(loop)

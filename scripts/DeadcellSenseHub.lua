@@ -312,22 +312,30 @@ feel:new_slider({
 ----------------------------------------------------------------
 -- AUTOFARM (placeholders only — no logic yet)
 ----------------------------------------------------------------
+-- AUTOFARM
+----------------------------------------------------------------
+Farm.FetchStages()
+local stageOpts = { "None" }
+for _, s in ipairs(Farm.AvailableStages) do
+	table.insert(stageOpts, tostring(s.id))
+end
+if #stageOpts == 1 then
+	-- HUD not ready yet: at least offer 1-2
+	stageOpts = { "None", "1", "2" }
+end
+
 local farm = window:new_page({ name = "Autofarm" })
 
 local farmMain = farm:new_section({ name = "General", size = "Fill" })
 farmMain:new_button({
 	name = "Start Autofarm",
 	flag = "farm_start",
-	callback = function()
-		Farm.Start()
-	end,
+	callback = function() Farm.Start() end,
 })
 farmMain:new_button({
 	name = "Stop Autofarm",
 	flag = "farm_stop",
-	callback = function()
-		Farm.Stop()
-	end,
+	callback = function() Farm.Stop() end,
 })
 farmMain:new_toggle({
 	name = "Auto Attack",
@@ -348,37 +356,28 @@ farmMain:new_toggle({
 	callback = function(s) Farm.CollectCorpses = s end,
 })
 farmMain:new_toggle({
-	name = "Auto Respawn / Return",
-	flag = "farm_respawn",
-	state = false,
-	callback = function(s) Farm.AutoRespawn = s end,
+	name = "Noclip Fly",
+	flag = "farm_noclip",
+	state = true,
+	callback = function(s) Farm.Noclip = s end,
 })
 farmMain:new_slider({
 	name = "Attack Delay",
 	flag = "farm_delay",
 	min = 15,
 	max = 50,
-	default = 10,
+	default = 5,
 	text = "[value]/10s",
 	callback = function(v) Farm.FarmDelay = v / 10 end,
 })
 farmMain:new_slider({
-	name = "Move Speed",
+	name = "Fly Speed",
 	flag = "farm_speed",
-	min = 16,
-	max = 100,
-	default = 48,
+	min = 30,
+	max = 200,
+	default = 80,
 	text = "[value]",
 	callback = function(v) Farm.MoveSpeed = v end,
-})
-farmMain:new_slider({
-	name = "Move Tick",
-	flag = "farm_movetick",
-	min = 5,
-	max = 50,
-	default = 15,
-	text = "[value]/100s",
-	callback = function(v) Farm.MoveTick = v / 100 end,
 })
 
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })
@@ -401,61 +400,71 @@ farmTarget:new_toggle({
 	state = false,
 	callback = function(s) Farm.PreferLowestHP = s end,
 })
-farmTarget:new_slider({
-	name = "Max Farm Distance",
-	flag = "farm_dist",
-	min = 50,
-	max = 5000,
-	default = 800,
-	callback = function(v) Farm.MaxDistance = v end,
-})
-farmTarget:new_dropdown({
-	name = "Farm Mode",
-	flag = "farm_mode",
-	options = { "NPC Grind", "Boss Only", "Hearts / Events" },
-	default = "NPC Grind",
-	callback = function(v) Farm.FarmMode = v end,
-})
+farmTarget:new_seperator({ name = "Searches entire map (no range cap)" })
 
-local farmLoadout = farm:new_section({ name = "Loadout (auto when set)", size = 260 })
+local farmLoadout = farm:new_section({ name = "Loadout (auto)", size = 260 })
 farmLoadout:new_dropdown({
-	name = "Kagune Stage",
-	flag = "farm_kagune_stage",
-	options = { "None", "Stage 1", "Stage 2", "Stage 3", "Stage 4" },
-	default = "None",
-	callback = function(v) Farm.KaguneStage = v end,
+	name = "Stage (from your HUD)",
+	flag = "farm_stage",
+	options = stageOpts,
+	default = stageOpts[2] or "1",
+	callback = function(v)
+		if v == "None" then Farm.Stage = "" else Farm.Stage = v end
+	end,
 })
 farmLoadout:new_dropdown({
-	name = "Quinque (slot match)",
+	name = "Quinque",
 	flag = "farm_quinque",
-	options = { "None", "C-Katana", "Scorpion 1/56", "IXA", "Narukami", "Custom" },
-	default = "None",
-	callback = function(v) Farm.Quinque = v end,
+	options = { "None", "IXA", "C-Katana", "Scorpion 1/56", "Narukami", "Custom" },
+	default = "IXA",
+	callback = function(v)
+		if v == "None" then Farm.Quinque = "None" else Farm.Quinque = v end
+	end,
 })
 farmLoadout:new_dropdown({
-	name = "Weapon Mode (C form)",
+	name = "Weapon Mode",
 	flag = "farm_wepmode",
-	options = { "Blade", "Ranged" },
-	default = "Blade",
+	options = { "Auto", "Blade", "Ranged" },
+	default = "Auto",
 	callback = function(v) Farm.WeaponMode = v end,
 })
-farmLoadout:new_toggle({
-	name = "Auto Kagune Toggle (Q)",
-	flag = "farm_kagune_tog",
-	state = false,
-	callback = function(s) Farm.AutoKaguneToggle = s end,
+farmLoadout:new_button({
+	name = "Refresh Stages",
+	flag = "farm_refresh_stages",
+	callback = function()
+		local st = Farm.FetchStages()
+		print("[Autofarm] stages=" .. #st)
+		for _, s in ipairs(st) do
+			print(string.format("  Stage %s | %s | modes=%s", s.id, s.nick, s.modes))
+		end
+		print("[Autofarm]", Farm.Status())
+	end,
 })
-
-local farmMisc = farm:new_section({ name = "Extras", size = 260, side = "right" })
-farmMisc:new_button({
+farmLoadout:new_button({
 	name = "Apply Loadout Now",
 	flag = "farm_apply",
 	callback = function() Farm.ApplyLoadoutNow() end,
 })
+farmLoadout:new_button({
+	name = "Toggle Kagune (Q)",
+	flag = "farm_kagune_q",
+	callback = function() Farm.KaguneToggleNow() end,
+})
+
+local farmMisc = farm:new_section({ name = "Status", size = 260, side = "right" })
 farmMisc:new_button({
 	name = "Print Farm Status",
 	flag = "farm_status",
 	callback = function() print("[Autofarm]", Farm.Status()) end,
+})
+farmMisc:new_button({
+	name = "List My Stages",
+	flag = "farm_list_stages",
+	callback = function()
+		for _, s in ipairs(Farm.FetchStages()) do
+			print(string.format("Stage %s | %s | modes=%s", s.id, s.nick, tostring(s.modes)))
+		end
+	end,
 })
 
 ----------------------------------------------------------------

@@ -50,6 +50,7 @@ local Farm = {
 	-- runtime
 	CurrentTarget = nil,
 	CorpseNpc = nil,
+	CorpseName = nil,
 	LastAttack = 0,
 	LastSpecial = 0,
 	LastArata = 0,
@@ -89,12 +90,20 @@ local function character()
 end
 
 local function readyCD(name)
+	-- working.lua: skills fire when Value ~= "DownTime" (not == "Ready")
 	local folder = pf()
 	if not folder then return true end
 	local v = folder:FindFirstChild(name)
 	if not v then return true end
 	local val = tostring(v.Value)
-	return val == "Ready"
+	if val == "DownTime" or val == "Down" then
+		return false
+	end
+	local num = tonumber(val)
+	if num and num > 0 then
+		return false
+	end
+	return true
 end
 
 local function canAct()
@@ -366,16 +375,18 @@ local function ensureRangeAfterEquip()
 		return -- wait until kagune/quinque is on character
 	end
 	if Farm._rangedOn then
-		return -- already switched once this life
+		return
 	end
-	if tick() - Farm.LastRange < 2 then return end
-	local folder = pf()
-	local can = folder and folder:FindFirstChild("CanToggleWep")
-	if can and can.Value and readyCD("SpecialBonusCD") then
-		pressKey("C")
-		Farm._rangedOn = true
-		Farm.LastRange = tick()
+	-- press C once when weapon is out; only skip if C is on DownTime cooldown
+	if tick() - Farm.LastRange < 1 then return end
+	if not readyCD("SpecialBonusCD") then
+		-- still try every 3s in case CD child means something else
+		if tick() - Farm.LastRange < 3 then return end
 	end
+	pressKey("C")
+	Farm._rangedOn = true
+	Farm.LastRange = tick()
+	print("[Autofarm] ranged toggle C after equip")
 end
 
 local function ensureMask()
@@ -509,29 +520,40 @@ local function findTarget()
 end
 
 local function collectCorpse(npc)
-	-- VERBATIM working.lua collect()
+	-- working.lua collect() — wait for "Name Corpse" under the NPC or its parent
 	local timer = tick()
 	if not npc then return false end
+	local npcName = npc.Name
+
+	-- if handed a name-only stub, skip instance wait
+	local isStub = type(npc) == "table" and npc.Name ~= nil and npc.WaitForChild == nil
+	local npcName = npc.Name
 
 	local model
-	pcall(function()
-		model = npc:WaitForChild(npc.Name .. " Corpse", 2)
-	end)
-	if not model or not model.Parent then
-		model = workspace:FindFirstChild(npc.Name .. " Corpse")
-	end
-	if not model then
-		-- also try parent folder
-		local parent = npc.Parent
-		if parent then
-			model = parent:FindFirstChild(npc.Name .. " Corpse")
+	if not isStub then
+		pcall(function()
+			model = npc:WaitForChild(npcName .. " Corpse", 2)
+		end)
+		if (not model or not model.Parent) and npc.Parent then
+			pcall(function()
+				model = npc.Parent:WaitForChild(npcName .. " Corpse", 1)
+			end)
 		end
+	end
+	if not model or not model.Parent then
+		model = workspace:FindFirstChild(npcName .. " Corpse")
+	end
+	if not model and not isStub then
+		-- dead model itself may still hold ClickPart
+		model = (npc.FindFirstChild and npc:FindFirstChild("ClickPart")) and npc or nil
 	end
 	if not model then
 		for _, d in ipairs(Workspace:GetDescendants()) do
-			if d:IsA("Model") and d.Name == npc.Name .. " Corpse" then
-				model = d
-				break
+			if d.Name == npcName .. " Corpse" or (d:IsA("Model") and d.Name == npcName) then
+				if d:FindFirstChild("ClickPart") or d:FindFirstChildWhichIsA("BasePart", true) then
+					model = d
+					if d:FindFirstChild("ClickPart") then break end
+				end
 			end
 		end
 	end
@@ -550,7 +572,6 @@ local function collectCorpse(npc)
 
 	hrp.CFrame = clickpart.CFrame * CFrame.new(0, 1.7, 0)
 
-	-- WalkSpeed is 0 while farming — restore briefly so MoveTo works
 	local prevWs = hum.WalkSpeed
 	pcall(function() hum.WalkSpeed = Farm._baseWalkSpeed or 48 end)
 
@@ -586,11 +607,10 @@ local function collectCorpse(npc)
 	until not model.Parent or not model:FindFirstChild("ClickPart") or not Farm.Enabled
 		or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") and LocalPlayer.Character.Humanoid.Health <= 0)
 
-	-- re-lock
 	pcall(function()
 		local ch = LocalPlayer.Character
 		local h = ch and ch:FindFirstChildOfClass("Humanoid")
-		if h and Farm.Enabled then
+		if h and Farm.Enabled and not Farm.AutoTrainer then
 			h.WalkSpeed = 0
 		end
 	end)
@@ -685,14 +705,20 @@ local function loop()
 			continue
 		end
 
-		-- lock player movement while farming (working.lua overwrites CFrame every frame)
+		-- lock movement while farming — but NOT if Auto Trainer needs MoveTo
 		if Farm._baseWalkSpeed == nil then
 			Farm._baseWalkSpeed = hum.WalkSpeed
 		end
-		if hum.WalkSpeed > 0 then
+		local lockMove = not Farm.AutoTrainer
+		if lockMove and hum.WalkSpeed > 0 then
 			pcall(function()
 				hum.WalkSpeed = 0
 				hum.AutoRotate = false
+			end)
+		elseif not lockMove and hum.WalkSpeed == 0 then
+			pcall(function()
+				hum.WalkSpeed = Farm._baseWalkSpeed or 48
+				hum.AutoRotate = true
 			end)
 		end
 
@@ -715,10 +741,17 @@ local function loop()
 			end
 		end
 
-		if Farm.CorpseNpc and Farm.CollectCorpses then
+		if Farm.CorpseNpc or (Farm.CorpseName and Farm.CollectCorpses) then
 			local npc = Farm.CorpseNpc
+			if (not npc or not npc.Parent) and Farm.CorpseName then
+				-- resolve by name into a dummy table with Name field
+				npc = { Name = Farm.CorpseName, Parent = Workspace }
+			end
 			Farm.CorpseNpc = nil
-			pcall(collectCorpse, npc)
+			Farm.CorpseName = nil
+			if npc then
+				pcall(collectCorpse, npc)
+			end
 			task.wait(0.05)
 			continue
 		end
@@ -730,6 +763,7 @@ local function loop()
 				Farm.Stats.kills += 1
 				if Farm.CollectCorpses and not target.Name:find("Gyakusatsu", 1, true) then
 					Farm.CorpseNpc = target
+					Farm.CorpseName = target.Name
 				end
 				Farm.CurrentTarget = nil
 				target = nil

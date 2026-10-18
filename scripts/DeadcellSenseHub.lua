@@ -471,14 +471,12 @@ farmTrain:new_toggle({
 	callback = function(s) Farm.ReputationCashout = s end,
 })
 farmTrain:new_button({
-	name = "Train Once",
-	flag = "farm_train_once",
-	callback = function() print("[Train]", Farm.TrainOnce()) end,
-})
-farmTrain:new_button({
-	name = "Quest Once",
-	flag = "farm_rep_once",
-	callback = function() Farm.DoReputationQuest(true) end,
+	name = "Print Train Status",
+	flag = "farm_train_status",
+	callback = function()
+		print("[Autofarm]", Farm.Status())
+		print("AutoTrainer=", Farm.AutoTrainer, "RepFarm=", Farm.ReputationFarm, "Cashout=", Farm.ReputationCashout)
+	end,
 })
 
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })

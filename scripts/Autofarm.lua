@@ -642,9 +642,9 @@ local function loop()
 			continue
 		end
 
-		-- reputation / trainer side jobs
+		-- reputation / trainer side jobs (working.lua order inside farm loop)
 		if Farm.ReputationFarm or Farm.ReputationCashout then
-			if pcall(Farm.TryReputationTick) then
+			if pcall(reputationTick) then
 				task.wait(0.5)
 				continue
 			end
@@ -783,14 +783,15 @@ function Farm.KaguneToggleNow()
 	print("[Autofarm] kagune toggle (Q)")
 end
 
--- ===================== Trainer (working.lua) =====================
+-- ===================== Trainer (working.lua loop) =====================
 local function getRemotes()
 	return game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
 end
 
 local function grabTrainersList()
 	if Farm.TrainersList then return Farm.TrainersList end
-	local team = pf() and pf().Customization and pf().Customization.Team.Value or "CCG"
+	local folder = pf()
+	local team = folder and folder.Customization and folder.Customization.Team.Value or "CCG"
 	local want = team == "CCG" and "(S1) Kureo Mado" or "(S1) Ken Kaneki"
 	pcall(function()
 		if not getgc then return end
@@ -804,7 +805,8 @@ local function grabTrainersList()
 	return Farm.TrainersList
 end
 
-function Farm.TrainOnce()
+-- one training cycle — same as working.lua btn2 Start body
+local function trainCycle()
 	local remotes = getRemotes()
 	if not remotes then return end
 	local folder = pf()
@@ -815,13 +817,18 @@ function Farm.TrainOnce()
 	local trainerName = trainers[team .. "Trainer"] and trainers[team .. "Trainer"].Value
 
 	local tkey
-	local conn
+	local connection = Farm._tsConn
+	if connection and connection.Connected then
+		connection:Disconnect()
+	end
+
 	pcall(function()
-		conn = LocalPlayer.Backpack.DescendantAdded:Connect(function(obj)
+		connection = LocalPlayer.Backpack.DescendantAdded:Connect(function(obj)
 			if tostring(obj) == "TSCodeVal" and obj:IsA("StringValue") then
 				tkey = obj.Value
 			end
 		end)
+		Farm._tsConn = connection
 	end)
 
 	local result
@@ -829,8 +836,8 @@ function Farm.TrainOnce()
 		result = remotes.Trainers.RequestTraining:InvokeServer()
 	end)
 
-	if conn then
-		pcall(function() conn:Disconnect() end)
+	if connection and connection.Connected then
+		connection:Disconnect()
 	end
 
 	if result == "TRAINING" then
@@ -851,25 +858,24 @@ function Farm.TrainOnce()
 		end
 	elseif result == "TRAINING COMPLETE" then
 		local list = grabTrainersList()
-		if list and trainerName then
-			local curProg = trainers[trainerName] and trainers[trainerName]:FindFirstChild("Progress")
-			local curVal = curProg and tonumber(curProg.Value) or 100
-			if curVal >= 100 then
-				for _, v in ipairs(trainers:GetDescendants()) do
-					if list and table.find(list, v.Name) then
-						local prog = v:FindFirstChild("Progress")
-						if prog and tonumber(prog.Value) < 100 then
-							pcall(function()
-								remotes.Trainers.ChangeTrainer:InvokeServer(v.Name)
-							end)
-							task.wait(1.5)
-							break
-						end
+		local cur = trainerName and trainers:FindFirstChild(trainerName)
+		local prog = cur and cur:FindFirstChild("Progress")
+		if list and prog and tonumber(prog.Value) == 100 then
+			for _, v in ipairs(trainers:GetDescendants()) do
+				if table.find(list, v.Name) then
+					local p = v:FindFirstChild("Progress")
+					if p and tonumber(p.Value) < 100 then
+						pcall(function()
+							remotes.Trainers.ChangeTrainer:InvokeServer(v.Name)
+						end)
+						task.wait(1.5)
+						break
 					end
 				end
 			end
 		end
 	end
+	-- else: result is time until next training — just wait
 	return result
 end
 
@@ -877,7 +883,7 @@ function Farm.TrainLoop()
 	if Farm._trainTask then return end
 	Farm._trainTask = task.spawn(function()
 		while Farm.Enabled and Farm.AutoTrainer do
-			pcall(Farm.TrainOnce)
+			pcall(trainCycle)
 			task.wait(1)
 		end
 		Farm._trainTask = nil
@@ -885,28 +891,39 @@ function Farm.TrainLoop()
 end
 
 function Farm.StopTrain()
+	if Farm._tsConn and Farm._tsConn.Connected then
+		pcall(function() Farm._tsConn:Disconnect() end)
+	end
 	if Farm._trainTask then
 		task.cancel(Farm._trainTask)
 		Farm._trainTask = nil
 	end
 end
 
--- ===================== Reputation (working.lua) =====================
-function Farm.DoReputationQuest(getQuest)
+-- ===================== Reputation (working.lua getQuest) =====================
+local function getQuestNPC()
+	local folder = pf()
+	local team = folder and folder.Customization and folder.Customization.Team.Value or "Ghoul"
+	if team == "Ghoul" then
+		local anteiku = Workspace:FindFirstChild("Anteiku")
+		return anteiku and anteiku:FindFirstChild("Yoshimura")
+	end
+	local ccg = Workspace:FindFirstChild("CCGBuilding")
+	return ccg and ccg:FindFirstChild("Yoshitoki")
+end
+
+-- typ=true → get quest, typ=false → cashout
+local function getQuest(typ)
 	local remotes = getRemotes()
 	if not remotes then return end
-	local folder = pf()
-	if not folder then return end
-	local team = folder.Customization and folder.Customization.Team.Value or "Ghoul"
-	local npc = (team == "Ghoul") and Workspace:FindFirstChild("Anteiku") and Workspace.Anteiku:FindFirstChild("Yoshimura")
-		or Workspace:FindFirstChild("CCGBuilding") and Workspace.CCGBuilding:FindFirstChild("Yoshitoki")
+	local npc = getQuestNPC()
 	if not npc or not npc:FindFirstChild("HumanoidRootPart") then return end
 
 	teleportTo(npc.HumanoidRootPart.CFrame)
 	pcall(function()
 		remotes.Ally.AllyInfo:InvokeServer()
 	end)
-	task.wait(0.3)
+	task.wait()
 	local ind = npc:FindFirstChild("TaskIndicator")
 	local cd = ind and ind:FindFirstChild("ClickDetector")
 	if cd then
@@ -914,15 +931,16 @@ function Farm.DoReputationQuest(getQuest)
 	end
 
 	local _, hrp = character()
-	if not hrp then return end
+	if not Farm.Enabled or not hrp then return end
 	if (npc.HumanoidRootPart.Position - hrp.Position).Magnitude > 20 then return end
 
-	if getQuest then
+	if typ then
 		local remote = remotes:FindFirstChild(npc.Name)
-		if remote and remote:FindFirstChild("Task") then
-			pcall(function() remote.Task:InvokeServer() end)
+		local taskRf = remote and remote:FindFirstChild("Task")
+		if taskRf then
+			pcall(function() taskRf:InvokeServer() end)
 			task.wait(0.2)
-			pcall(function() remote.Task:InvokeServer() end)
+			pcall(function() taskRf:InvokeServer() end)
 		end
 	else
 		pcall(function() remotes.ReputationCashOut:InvokeServer() end)
@@ -930,26 +948,19 @@ function Farm.DoReputationQuest(getQuest)
 	end
 end
 
-function Farm.TryReputationTick()
-	if Farm.ReputationCashout and tick() - Farm.LastCashout > 7200 then
-		Farm.DoReputationQuest(false)
+-- called from main loop — same order as working.lua farm while
+local function reputationTick()
+	local folder = pf()
+	local cq = folder and folder:FindFirstChild("CurrentQuest")
+	local complete = cq and cq:FindFirstChild("Complete")
+	local need = complete and complete:FindFirstChild("Aogiri Member")
+
+	if Farm.ReputationFarm and (not need or (need.Value and need.Max and tonumber(need.Value) >= tonumber(need.Max.Value))) then
+		getQuest(true)
 		return true
-	end
-	if Farm.ReputationFarm then
-		local folder = pf()
-		local cq = folder and folder:FindFirstChild("CurrentQuest")
-		local complete = cq and cq:FindFirstChild("Complete")
-		local need = complete and complete:FindFirstChild("Aogiri Member")
-		if not need then
-			Farm.DoReputationQuest(true)
-			return true
-		end
-		local val = need:FindFirstChild("Value")
-		local max = need:FindFirstChild("Max")
-		if val and max and tonumber(val.Value) >= tonumber(max.Value) then
-			Farm.DoReputationQuest(true)
-			return true
-		end
+	elseif Farm.ReputationCashout and tick() - Farm.LastCashout > 7200 then
+		getQuest(false)
+		return true
 	end
 	return false
 end

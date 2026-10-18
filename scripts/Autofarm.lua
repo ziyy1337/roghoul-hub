@@ -1,46 +1,46 @@
 --// Ro-Ghoul Autofarm
--- Noclip-flight to targets, official KeyEvent combat, stages from HUD.
+-- Based on z4gs working patterns: tween TP, stage keys One/Two, Mouse.Hit silent aim.
+-- Camera is never modified. Mask=M, Arata open=0.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
+local GetGc = getgc
+local GetConstants = getconstants
 
 local LocalPlayer = Players.LocalPlayer
 
+-- fallback auth; live key is grabbed from ClientControl constants when possible
 local KEY_AUTH = "操你💦💔🍑👌💦操你💦💔🍑👌💦💔🍑👌💦💔🍑👌💔🍑👌💦💔🍑👌"
 
 local Farm = {
 	Enabled = false,
-	AutoAttack = true,
-	AutoCollect = false,
+	AutoCollect = true,
 	CollectCorpses = true,
-
-	-- movement
-	FarmDelay = 0.5,     -- attack gap seconds
-	MoveSpeed = 80,      -- fly speed studs/sec toward target
 	Noclip = true,
 
-	-- targets
+	TeleportSpeed = 150,  -- studs/sec (z4gs style)
+	DistanceFromNpc = 5,  -- standoff (negative in z4gs means in front)
+	FarmDelay = 0.05,     -- attack tick
+
 	Group = "Ghoul",
 	PreferNearest = true,
 	PreferLowestHP = false,
-	-- no max distance: always full-map search
-	MaxDistance = 1e9,
 
-	-- loadout (always applied)
-	Quinque = "IXA",     -- "" = none
-	Stage = "1",         -- fetched from HUD; "1".."N"
-	WeaponMode = "Auto", -- Auto | Blade | Ranged
+	Quinque = "IXA",
+	Stage = "One",         -- "One".."Six" (KeyEvent stage names)
+	WeaponMode = "Auto",   -- Auto | Blade | Ranged
 
 	-- Attacks (Mouse1 always active)
 	AttackE = false,
 	AttackR = false,
 	AttackF = false,
 	AttackC = false,
-	RangeMode = false,       -- switch to range (C) after quinque/kagune equip
-	AutoArata = false,       -- open with 0
-	AutoArataRefill = false, -- re-open when Stam empty
-	AutoMask = false,        -- equip mask with M
+	RangeMode = false,
+	AutoArata = false,
+	AutoArataRefill = false,
+	AutoMask = false,
 
 	-- runtime
 	CurrentTarget = nil,
@@ -50,13 +50,21 @@ local Farm = {
 	LastArata = 0,
 	LastMask = 0,
 	LastRange = 0,
+	LastEquip = 0,
 	Stats = { attacks = 0, collects = 0, kills = 0 },
-	AvailableStages = {}, -- { {id="1", label="Stage 1", modes=2, nick="IXA"}, ... }
+	AvailableStages = {},
+	RemoteKey = nil,
 	_task = nil,
 	_noclipConn = nil,
 }
 
--- ===================== helpers =====================
+local KEY_NAME_MAP = {
+	["1"] = "One", ["2"] = "Two", ["3"] = "Three",
+	["4"] = "Four", ["5"] = "Five", ["6"] = "Six",
+	One = "One", Two = "Two", Three = "Three",
+	Four = "Four", Five = "Five", Six = "Six",
+}
+
 local function pf()
 	return LocalPlayer:FindFirstChild("PlayerFolder")
 end
@@ -75,7 +83,8 @@ local function readyCD(name)
 	if not folder then return true end
 	local v = folder:FindFirstChild(name)
 	if not v then return true end
-	return tostring(v.Value) == "Ready"
+	local val = tostring(v.Value)
+	return val == "Ready"
 end
 
 local function canAct()
@@ -90,80 +99,91 @@ local function getKeyEvent()
 	return rem and rem:FindFirstChild("KeyEvent")
 end
 
-local function MHAt(pos)
-	local cam = Workspace.CurrentCamera
-	local origin = cam and cam.CFrame.Position or pos
-	return CFrame.lookAt(pos, origin)
+local function MH()
+	local m = LocalPlayer:GetMouse()
+	return m.Hit
 end
 
-local function fireKey(keyName, state, hitCFrame)
-	local remote = getKeyEvent()
-	if not remote then return end
-	local cam = Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame or CFrame.new()
-	local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	local pos = hrp and hrp.Position or Vector3.zero
-	local hit = hitCFrame or MHAt(pos + Vector3.new(0, 0, -3))
-	pcall(function()
-		remote:FireServer(KEY_AUTH, keyName, state, hit, nil, cam, pos)
-	end)
-end
-
-local function tapKey(name)
-	fireKey(name, "Down")
-	task.wait(0.04)
-	fireKey(name, "Up")
-end
-
--- ===================== stages (from HUD) =====================
-function Farm.FetchStages()
-	local stages = {}
-	local gui = LocalPlayer:FindFirstChild("PlayerGui")
-	local hud = gui and gui:FindFirstChild("HUD")
-	local frame = hud and hud:FindFirstChild("StagesFrame")
-	local scroll = frame and frame:FindFirstChild("InfoScroll")
-	if scroll then
-		for _, child in ipairs(scroll:GetChildren()) do
-			if child:IsA("GuiObject") or child:IsA("Frame") then
-				local stageLbl = child:FindFirstChild("StageLabel")
-				local modesLbl = child:FindFirstChild("ModesLabel")
-				local nickLbl = child:FindFirstChild("NicknameLabel")
-				if stageLbl and stageLbl:IsA("TextLabel") then
-					local stageNum = string.match(stageLbl.Text, "(%d+)")
-					local modeNum = modesLbl and string.match(modesLbl.Text, "MODE%(S%):%s*(%d+)") or "1"
-					local nick = nickLbl and nickLbl.Text or child.Name
-					-- skip template Example
-					if child.Name ~= "Example" and stageNum then
-						table.insert(stages, {
-							id = stageNum,
-							label = ("Stage %s"):format(stageNum),
-							modes = tonumber(modeNum) or 1,
-							nick = nick,
-							node = child.Name,
-						})
+local function getAuthKey()
+	if Farm.RemoteKey and #Farm.RemoteKey >= 50 then
+		return Farm.RemoteKey
+	end
+	-- try grab from ClientControl constants (z4gs method)
+	local ok = pcall(function()
+		if not GetGc or not GetConstants then return end
+		for _, v in pairs(GetGc(true)) do
+			if type(v) == "function" then
+				local info = getinfo and getinfo(v)
+				if info and info.source and info.source:find("ClientControl") then
+					local constants = GetConstants(v)
+					for i, c in ipairs(constants) do
+						if c == "KeyEvent" then
+							local found = constants[i + 1]
+							if type(found) == "string" and #found >= 50 then
+								Farm.RemoteKey = found
+								return
+							end
+						end
 					end
 				end
 			end
 		end
+	end)
+	if not Farm.RemoteKey then
+		Farm.RemoteKey = KEY_AUTH
 	end
+	return Farm.RemoteKey
+end
 
-	-- fallback: SpecialStat.CurStage
+local function pressKey(keyName, hit)
+	local remote = getKeyEvent()
+	if not remote then return end
+	local cam = Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame or CFrame.new()
+	local hitCFrame = hit or MH()
+	pcall(function()
+		remote:FireServer(getAuthKey(), keyName, "Down", hitCFrame, nil, cam)
+	end)
+end
+
+-- ===================== stages =====================
+function Farm.FetchStages()
+	local stages = {}
+	local gui = LocalPlayer:FindFirstChild("PlayerGui")
+	local hud = gui and gui:FindFirstChild("HUD")
+	local scroll = hud and hud:FindFirstChild("StagesFrame") and hud.StagesFrame:FindFirstChild("InfoScroll")
+	if scroll then
+		local count = 0
+		for _, child in ipairs(scroll:GetChildren()) do
+			if child.ClassName == "Frame" and child.Name ~= "Example" then
+				count += 1
+				local stageLbl = child:FindFirstChild("StageLabel")
+				local modesLbl = child:FindFirstChild("ModesLabel")
+				local nickLbl = child:FindFirstChild("NicknameLabel")
+				local num = stageLbl and string.match(stageLbl.Text or "", "(%d+)") or tostring(count)
+				local modes = modesLbl and tonumber(string.match(modesLbl.Text or "", "MODE%(S%):%s*(%d+)")) or 1
+				table.insert(stages, {
+					id = num,
+					word = KEY_NAME_MAP[num] or ("One"),
+					label = ("Stage %s"):format(num),
+					modes = modes,
+					nick = nickLbl and nickLbl.Text or child.Name,
+				})
+			end
+		end
+	end
 	if #stages == 0 then
-		local folder = pf()
-		local special = folder and folder:FindFirstChild("SpecialStat")
-		local cur = special and special:FindFirstChild("CurStage")
-		if cur then
+		for i = 1, 3 do
 			table.insert(stages, {
-				id = tostring(cur.Value),
-				label = ("Stage %s"):format(tostring(cur.Value)),
+				id = tostring(i),
+				word = KEY_NAME_MAP[tostring(i)] or "One",
+				label = ("Stage %s"):format(i),
 				modes = 2,
 				nick = "?",
-				node = "SpecialStat",
 			})
 		end
 	end
-
 	Farm.AvailableStages = stages
-	if Farm.Stage == "" and stages[1] then
+	if Farm.Stage == "" then
 		Farm.Stage = stages[1].id
 	end
 	return stages
@@ -178,13 +198,32 @@ local function currentStageInfo()
 	return Farm.AvailableStages[1]
 end
 
+local function stageWord()
+	local st = currentStageInfo()
+	if st and st.word then return st.word end
+	return KEY_NAME_MAP[tostring(Farm.Stage)] or "One"
+end
+
+-- ===================== character state =====================
+local function hasEquip()
+	local c = LocalPlayer.Character
+	if not c then return false end
+	return c:FindFirstChild("Kagune") ~= nil or c:FindFirstChild("Quinque") ~= nil
+end
+
+local function isRanged()
+	-- best-effort: CanToggleWep + SpecialBonusCD; no clean "form" value on client.
+	-- We track last C press; RangeMode waits for equip then presses C once.
+	return Farm._rangedOn == true
+end
+
 -- ===================== noclip =====================
 local function setNoclip(on)
 	if on and not Farm._noclipConn then
 		Farm._noclipConn = RunService.Stepped:Connect(function()
 			local c = LocalPlayer.Character
 			if not c then return end
-			for _, p in ipairs(c:GetDescendants()) do
+			for _, p in ipairs(c:GetChildren()) do
 				if p:IsA("BasePart") then
 					p.CanCollide = false
 				end
@@ -196,123 +235,136 @@ local function setNoclip(on)
 	end
 end
 
-local function flyTo(targetPos, dt)
-	local _, hrp = character()
-	if not hrp then return false end
-	local delta = targetPos - hrp.Position
-	local dist = delta.Magnitude
-	if dist < 1.5 then return true end
-	local speed = math.clamp(Farm.MoveSpeed, 20, 200)
-	local step = math.min(speed * dt, dist)
-	local dir = delta.Unit
-	-- fly: keep Y so we don't sink, then level
-	local goal = hrp.Position + dir * step
-	pcall(function()
-		hrp.CFrame = CFrame.new(goal) * (hrp.CFrame - hrp.CFrame.Position)
-		hrp.AssemblyLinearVelocity = dir * step / math.max(dt, 1/60)
-	end)
-	return dist < 3
+-- ===================== teleport (z4gs tween) =====================
+local function teleportTo(pos, cancelWhen)
+	local c, hrp, hum = character()
+	if not hrp then return end
+	local dist = (hrp.Position - pos.p).Magnitude
+	local info = TweenInfo.new(math.max(dist / math.clamp(Farm.TeleportSpeed, 30, 250), 0.05), Enum.EasingStyle.Linear)
+	local val = Instance.new("CFrameValue")
+	val.Value = hrp.CFrame
+	local tween = TweenService:Create(val, info, { Value = pos })
+	tween:Play()
+	local done = false
+	tween.Completed:Connect(function() done = true end)
+	while not done do
+		if not Farm.Enabled then tween:Cancel() break end
+		if cancelWhen and cancelWhen() then tween:Cancel() break end
+		if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+			tween:Cancel()
+			break
+		end
+		if LocalPlayer.Character.Humanoid.Health <= 0 then
+			tween:Cancel()
+			break
+		end
+		LocalPlayer.Character.HumanoidRootPart.CFrame = val.Value
+		if Farm.Noclip then
+			pcall(function()
+				LocalPlayer.Character.HumanoidRootPart.CanCollide = false
+			end)
+		end
+		task.wait()
+	end
+	val:Destroy()
 end
 
--- ===================== loadout (always) =====================
-local appliedQuinque = nil
-local appliedStage = nil
-local appliedMode = nil
+-- ===================== loadout =====================
+local function ensureEquip()
+	if tick() - Farm.LastEquip < 0.4 then return end
+	if hasEquip() then
+		Farm.LastEquip = tick()
+		return
+	end
+	-- press stage word (One, Two, ...) like z4gs
+	pressKey(stageWord())
+	Farm.LastEquip = tick()
+end
 
-local function applyLoadout()
+local function ensureRangeAfterEquip()
+	if not Farm.RangeMode then return end
+	if not hasEquip() then
+		return -- wait until kagune/quinque is on character
+	end
+	if Farm._rangedOn then
+		return -- already switched once this life
+	end
+	if tick() - Farm.LastRange < 2 then return end
 	local folder = pf()
-	if not folder then return end
-	local st = currentStageInfo()
-
-	-- Quinque slot
-	if Farm.Quinque ~= "" and Farm.Quinque ~= "None" then
-		local slots = folder:FindFirstChild("WepSlots")
-		if slots then
-			local v1 = slots:FindFirstChild("WepSlot1") and slots.WepSlot1.Value or ""
-			local v2 = slots:FindFirstChild("WepSlot2") and slots.WepSlot2.Value or ""
-			local q = string.lower(Farm.Quinque)
-			if v1 ~= "" and string.find(string.lower(v1), q, 1, true) and appliedQuinque ~= "1" then
-				tapKey("1")
-				appliedQuinque = "1"
-			elseif v2 ~= "" and string.find(string.lower(v2), q, 1, true) and appliedQuinque ~= "2" then
-				tapKey("2")
-				appliedQuinque = "2"
-			end
-		end
-	end
-
-	-- Stage: only if we have a way to switch. Ro-Ghoul stages are usually
-	-- selected in HUD (not KeyEvent). We store selection; ApplyLoadoutNow
-	-- also tries HUD button click if present.
-	if appliedStage ~= Farm.Stage then
-		appliedStage = Farm.Stage
-	end
-
-	-- Weapon mode: Range Mode forces Ranged (C) after equip
-	local want = Farm.WeaponMode
-	if Farm.RangeMode then
-		want = "Ranged"
-	elseif want == "Auto" then
-		want = (st and (st.modes or 1) >= 2) and "Ranged" or "Blade"
-	end
-	if want ~= appliedMode then
-		local folder2 = pf()
-		local can = folder2 and folder2:FindFirstChild("CanToggleWep")
-		if want == "Ranged" and can and can.Value and readyCD("SpecialBonusCD") then
-			tapKey("C")
-			Farm.LastRange = tick()
-		elseif want == "Blade" and can and can.Value and readyCD("SpecialBonusCD") then
-			if appliedMode == "Ranged" then
-				tapKey("C")
-			end
-		end
-		appliedMode = want
-	end
-
-	-- keep Range Mode armed: if user toggled it on mid-run, re-press C
-	if Farm.RangeMode and tick() - Farm.LastRange > 3 then
-		local folder2 = pf()
-		local can = folder2 and folder2:FindFirstChild("CanToggleWep")
-		if can and can.Value and readyCD("SpecialBonusCD") then
-			tapKey("C")
-			Farm.LastRange = tick()
-			appliedMode = "Ranged"
-		end
+	local can = folder and folder:FindFirstChild("CanToggleWep")
+	if can and can.Value and readyCD("SpecialBonusCD") then
+		pressKey("C")
+		Farm._rangedOn = true
+		Farm.LastRange = tick()
 	end
 end
 
-function Farm.KaguneToggleNow()
-	tapKey("Q")
-end
-
--- try click stage button in HUD
-local function clickStageInHud(stageId)
-	local gui = LocalPlayer:FindFirstChild("PlayerGui")
-	local hud = gui and gui:FindFirstChild("HUD")
-	local frame = hud and hud:FindFirstChild("StagesFrame")
-	local scroll = frame and frame:FindFirstChild("InfoScroll")
-	if not scroll then return false end
-	for _, child in ipairs(scroll:GetChildren()) do
-		local stageLbl = child:FindFirstChild("StageLabel")
-		if stageLbl and stageLbl:IsA("TextLabel") then
-			local n = string.match(stageLbl.Text, "(%d+)")
-			if n == tostring(stageId) then
-				-- find clickable
-				for _, btn in ipairs(child:GetDescendants()) do
-					if btn:IsA("TextButton") or btn:IsA("ImageButton") then
-						pcall(function()
-							btn.Activated:Fire()
-						end)
-						return true
-					end
-				end
-			end
-		end
+local function ensureMask()
+	if not Farm.AutoMask then return end
+	if tick() - Farm.LastMask < 4 then return end
+	local folder = pf()
+	local mask = folder and folder:FindFirstChild("Mask")
+	if mask and mask.Value then
+		Farm.LastMask = tick()
+		return
 	end
-	return false
+	pressKey("M")
+	Farm.LastMask = tick()
 end
 
--- ===================== combat / targeting =====================
+local function ensureArata()
+	if not Farm.AutoArata then return end
+	if tick() - Farm.LastArata < 4 then return end
+	local sc = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("ServerControl")
+	local arataOn = sc and sc:FindFirstChild("ArataOn")
+	if arataOn and arataOn.Value then
+		Farm.LastArata = tick()
+		return
+	end
+	-- only open when OFF (tapping while on closes it)
+	pressKey("0")
+	Farm.LastArata = tick()
+end
+
+-- death re-arm
+local function onDeathReset()
+	Farm.CurrentTarget = nil
+	Farm.CorpseDrop = nil
+	Farm._rangedOn = false
+	Farm.LastEquip = 0
+	Farm.LastMask = 0
+	Farm.LastArata = 0
+	Farm.LastRange = 0
+	-- after respawn, re-equip / re-mask / re-open arata
+	task.delay(1.5, function()
+		if Farm.AutoMask then
+			pressKey("M")
+			Farm.LastMask = tick()
+		end
+		if Farm.AutoArata then
+			pressKey("0")
+			Farm.LastArata = tick()
+		end
+	end)
+end
+
+-- ===================== targeting =====================
+local playerChars = {}
+local function refreshPlayerChars()
+	playerChars = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.Character then playerChars[p.Character] = true end
+	end
+end
+Players.PlayerAdded:Connect(function(p)
+	p.CharacterAdded:Connect(refreshPlayerChars)
+end)
+LocalPlayer.CharacterAdded:Connect(function()
+	task.wait(0.5)
+	refreshPlayerChars()
+	onDeathReset()
+end)
+
 local function classifyNPC(model)
 	local p = model.Parent
 	for _ = 1, 4 do
@@ -329,149 +381,36 @@ local function classifyNPC(model)
 	return "Named"
 end
 
-local playerChars = {}
-local function refreshPlayerChars()
-	playerChars = {}
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p.Character then playerChars[p.Character] = true end
-	end
-end
-Players.PlayerAdded:Connect(function(p)
-	p.CharacterAdded:Connect(refreshPlayerChars)
-end)
-LocalPlayer.CharacterAdded:Connect(function()
-	task.wait(0.4)
-	refreshPlayerChars()
-	Farm.CurrentTarget = nil
-	Farm.CorpseDrop = nil
-	appliedQuinque = nil
-	appliedMode = nil
-end)
-
-local function attackOnce(target)
-	if not readyCD("ClickCD") or not canAct() then return false end
-	local bone = target:FindFirstChild("Head")
-		or target:FindFirstChild("HumanoidRootPart")
-		or target.PrimaryPart
-	if not bone then return false end
-
-	local _, hrp = character()
-	if hrp then
-		local flat = Vector3.new(bone.Position.X, hrp.Position.Y, bone.Position.Z)
-		if (flat - hrp.Position).Magnitude > 0.05 then
-			hrp.CFrame = CFrame.lookAt(hrp.Position, flat)
-		end
-	end
-
-	local hit = MHAt(bone.Position)
-	-- Mouse1 always active
-	fireKey("Mouse1", "Down", hit)
-	task.wait(0.04)
-	fireKey("Mouse1", "Up", hit)
-	Farm.LastAttack = tick()
-	Farm.Stats.attacks += 1
-
-	-- optional specials (individual toggles)
-	local specials = {}
-	if Farm.AttackE and readyCD("Special1CD") and tick() - Farm.LastSpecial > 1.0 then
-		table.insert(specials, { key = "E", cd = 1.0 })
-	end
-	if Farm.AttackR and readyCD("Special2CD") and tick() - Farm.LastSpecial > 2.0 then
-		table.insert(specials, { key = "R", cd = 2.0 })
-	end
-	if Farm.AttackF and readyCD("Special3CD") and tick() - Farm.LastSpecial > 3.0 then
-		table.insert(specials, { key = "F", cd = 3.0 })
-	end
-	if Farm.AttackC and readyCD("SpecialBonusCD") and tick() - Farm.LastSpecial > 2.5 then
-		table.insert(specials, { key = "C", cd = 2.5 })
-	end
-
-	-- fire at most one special per swing (keeps CD logic simple)
-	local choice = specials[1]
-	if choice then
-		fireKey(choice.key, "Down", hit)
-		task.wait(0.04)
-		fireKey(choice.key, "Up", hit)
-		Farm.LastSpecial = tick()
-	end
-	return true
-end
-
--- Arata / mask helpers (keys as user specified: 0 = arata, M = mask)
-local function ensureMask()
-	if not Farm.AutoMask then return end
-	if tick() - Farm.LastMask < 5 then return end
-	local folder = pf()
-	if not folder then return end
-	local mask = folder:FindFirstChild("Mask")
-	if mask and mask.Value then
-		-- already on
-		Farm.LastMask = tick()
-		return
-	end
-	tapKey("M")
-	Farm.LastMask = tick()
-end
-
-local function ensureArata()
-	if not (Farm.AutoArata or Farm.AutoArataRefill) then return end
-	if tick() - Farm.LastArata < 4 then return end
-
-	local folder = pf()
-	if not folder then return end
-	local sc = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("ServerControl")
-	local arataOn = sc and sc:FindFirstChild("ArataOn")
-	local stam = folder:FindFirstChild("ArataStat") and folder.ArataStat:FindFirstChild("Stam")
-	local stamVal = stam and tostring(stam.Value) or ""
-
-	local on = arataOn and arataOn.Value == true
-	local stamEmpty = (stamVal == "" or stamVal == "0")
-
-	if Farm.AutoArata and not on then
-		tapKey("0")
-		Farm.LastArata = tick()
-		return
-	end
-	if Farm.AutoArataRefill and on and stamEmpty then
-		-- refill = re-tap 0 / open again
-		tapKey("0")
-		Farm.LastArata = tick()
-	end
-end
-
 local function findTarget()
 	local _, hrp = character()
 	if not hrp then return nil end
 	local best, bestScore = nil, math.huge
 	local myPos = hrp.Position
-
 	for _, d in ipairs(Workspace:GetDescendants()) do
 		if d:IsA("Model") and not playerChars[d] then
 			local nm = d.Name
-			if not nm:find("Corpse", 1, true) then
+			if not nm:find("Corpse", 1, true) and not nm:find("Mob", 1, true) then
 				local hum = d:FindFirstChildOfClass("Humanoid")
 				local part = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChild("Head")
 				if hum and part and hum.Health > 0 and hum.MaxHealth < 1e6 then
 					local dist = (part.Position - myPos).Magnitude
-					if dist <= Farm.MaxDistance then -- effectively infinite
-						local group = classifyNPC(d)
-						local match = false
-						if Farm.Group == "Any" then
-							match = true
-						elseif Farm.Group == "Gyakusatsu" then
-							match = group == "Gyakusatsu" or nm == "Gyakusatsu"
-						elseif Farm.Group == group then
-							match = true
+					local group = classifyNPC(d)
+					local match = false
+					if Farm.Group == "Any" then
+						match = true
+					elseif Farm.Group == "Gyakusatsu" then
+						match = group == "Gyakusatsu" or nm == "Gyakusatsu" or (part.Parent and part.Parent.Name == "GyakusatsuSpawn")
+					elseif Farm.Group == group then
+						match = true
+					end
+					if match then
+						local score = dist
+						if Farm.PreferLowestHP and not Farm.PreferNearest then
+							score = hum.Health * 0.01 + dist
 						end
-						if match then
-							local score = dist
-							if Farm.PreferLowestHP and not Farm.PreferNearest then
-								score = hum.Health * 0.01 + dist
-							end
-							if score < bestScore then
-								bestScore = score
-								best = d
-							end
+						if score < bestScore then
+							bestScore = score
+							best = d
 						end
 					end
 				end
@@ -481,80 +420,80 @@ local function findTarget()
 	return best
 end
 
-local function watchKill(target)
-	if not target then return end
-	local hum = target:FindFirstChildOfClass("Humanoid")
-	local part = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
-	if hum and part and hum.Health <= 0 then
-		Farm.Stats.kills += 1
-		if Farm.CollectCorpses then
-			Farm.CorpseDrop = { pos = part.Position, name = target.Name, t = tick() }
-		end
-		Farm.CurrentTarget = nil
-	end
-end
-
-local function collectAt(pos)
-	local _, hrp = character()
-	if not hrp or not pos then return false end
-	if (pos - hrp.Position).Magnitude > 8 then
-		flyTo(pos, 0.05)
-		return true
-	end
-	local hit = MHAt(pos)
-	fireKey("Mouse1", "Down", hit)
-	task.wait(0.04)
-	fireKey("Mouse1", "Up", hit)
-	for _, d in ipairs(Workspace:GetDescendants()) do
-		if d:IsA("ProximityPrompt") or d:IsA("ClickDetector") then
-			local parent = d.Parent
-			local part = parent and (parent:IsA("BasePart") and parent or parent:FindFirstChildWhichIsA("BasePart", true))
-			if part and (part.Position - hrp.Position).Magnitude < 15 then
-				pcall(function()
-					if d:IsA("ProximityPrompt") then
-						d:InputHoldBegin()
-						task.wait(0.15)
-						d:InputHoldEnd()
-					else
-						d:MouseClick()
-					end
-				end)
-				Farm.Stats.collects += 1
-				return true
+local function collectCorpse(npc)
+	local model = npc and Workspace:FindFirstChild(npc.Name .. " Corpse")
+		or (function()
+			for _, d in ipairs(Workspace:GetDescendants()) do
+				if d:IsA("Model") and d.Name:find(npc.Name, 1, true) and d.Name:find("Corpse", 1, true) then
+					return d
+				end
 			end
-		end
+		end)()
+	if not model then return false end
+	local click = model:FindFirstChild("ClickPart") or model:FindFirstChildWhichIsA("BasePart", true)
+	if not click then return false end
+	local _, hrp = character()
+	if not hrp then return false end
+	teleportTo(click.CFrame * CFrame.new(0, 1.7, 0))
+	local timer = tick()
+	while tick() - timer < 4 and Farm.Enabled do
+		if not model.Parent then break end
+		pcall(function()
+			local cd = click:FindFirstChildOfClass("ClickDetector")
+			if cd then
+				cd:MouseClick()
+			end
+			-- unnamed child used in z4gs
+			local unnamed = click:FindFirstChild("")
+			if unnamed and unnamed:IsA("ClickDetector") then
+				fireclickdetector(unnamed, 1)
+			end
+		end)
+		Farm.Stats.collects += 1
+		task.wait(0.15)
 	end
 	return true
 end
 
-local function collectNearby()
-	local _, hrp = character()
-	if not hrp then return end
-	local myPos = hrp.Position
-	for _, d in ipairs(Workspace:GetDescendants()) do
-		if d:IsA("ProximityPrompt") or d:IsA("ClickDetector") then
-			local parent = d.Parent
-			local part = parent and (parent:IsA("BasePart") and parent or parent:FindFirstChildWhichIsA("BasePart", true))
-			if part and (part.Position - myPos).Magnitude < 40 then
-				flyTo(part.Position, 0.05)
-				pcall(function()
-					if d:IsA("ProximityPrompt") then
-						d:InputHoldBegin()
-						task.wait(0.15)
-						d:InputHoldEnd()
-					else
-						d:MouseClick()
-					end
-				end)
-				Farm.Stats.collects += 1
-				return true
-			end
-		end
+-- ===================== attack =====================
+local function attackOnce(target)
+	if not canAct() then return false end
+	local hrpPart = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
+	if not hrpPart then return false end
+	local _, myHrp = character()
+	if not myHrp then return false end
+
+	-- silent: aim Mouse.Hit at target (hook spoofs Hit; camera untouched)
+	local hit = CFrame.lookAt(hrpPart.Position, Workspace.CurrentCamera.CFrame.Position)
+
+	-- stand near target like z4gs (lookVector offset)
+	if not Farm.RangeMode then
+		local stand = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.clamp(Farm.DistanceFromNpc, 2, 15))
+		myHrp.CFrame = CFrame.new(stand.Position) * CFrame.lookAt(stand.Position, hrpPart.Position)
 	end
-	return false
+
+	pressKey("Mouse1", hit)
+	Farm.LastAttack = tick()
+	Farm.Stats.attacks += 1
+
+	local function trySpecial(key, cdName, minGap)
+		if readyCD(cdName) and tick() - Farm.LastSpecial > minGap then
+			pressKey(key, hit)
+			Farm.LastSpecial = tick()
+			return true
+		end
+		return false
+	end
+
+	-- E/R/F/C only if each toggle is on (Mouse1 always)
+	if Farm.AttackE then trySpecial("E", "Special1CD", 1.0) end
+	if Farm.AttackR then trySpecial("R", "Special2CD", 2.0) end
+	if Farm.AttackF then trySpecial("F", "Special3CD", 3.0) end
+	if Farm.AttackC then trySpecial("C", "SpecialBonusCD", 2.5) end
+	return true
 end
 
--- ===================== loop =====================
+-- ===================== main =====================
 local function stop()
 	Farm.Enabled = false
 	Farm.CurrentTarget = nil
@@ -568,53 +507,54 @@ end
 
 local function loop()
 	local lastApply = 0
-	local lastT = tick()
 	while Farm.Enabled do
-		local now = tick()
-		local dt = math.min(now - lastT, 0.1)
-		lastT = now
-
-		if not canAct() or not character() then
-			task.wait(0.3)
+		local c, hrp, hum = character()
+		if not (c and hrp and hum) or hum.Health <= 0 then
+			task.wait(0.25)
 			continue
 		end
 
-		if now - lastApply > 2 then
-			lastApply = now
+		if tick() - lastApply > 1.5 then
+			lastApply = tick()
 			pcall(Farm.FetchStages)
-			pcall(applyLoadout)
 		end
 
-		-- mask / arata upkeep
+		pcall(ensureEquip)
 		pcall(ensureMask)
 		pcall(ensureArata)
+		pcall(ensureRangeAfterEquip)
 
-		-- corpse run
-		if Farm.CorpseDrop and tick() - Farm.CorpseDrop.t < 15 then
-			local _, hrp = character()
-			if hrp and (Farm.CorpseDrop.pos - hrp.Position).Magnitude > 6 then
-				flyTo(Farm.CorpseDrop.pos, dt)
-				task.wait(0.03)
-				continue
-			else
-				collectAt(Farm.CorpseDrop.pos)
-				if tick() - Farm.CorpseDrop.t > 3 then
-					Farm.CorpseDrop = nil
+		-- corpse
+		if Farm.CorpseDrop and tick() - Farm.CorpseDrop.t < 12 then
+			local target = Farm.CorpseDrop.model
+			if target and target.Parent then
+				local click = target:FindFirstChild("ClickPart") or target:FindFirstChildWhichIsA("BasePart", true)
+				if click then
+					if (click.Position - hrp.Position).Magnitude > 5 then
+						teleportTo(click.CFrame * CFrame.new(0, 1.7, 0))
+					else
+						collectCorpse(Farm.CorpseDrop)
+						if tick() - Farm.CorpseDrop.t > 3 then
+							Farm.CorpseDrop = nil
+						end
+					end
+					task.wait(0.1)
+					continue
 				end
-				task.wait(0.2)
-				continue
+			else
+				Farm.CorpseDrop = nil
 			end
-		end
-
-		if Farm.AutoCollect then
-			collectNearby()
 		end
 
 		local target = Farm.CurrentTarget
 		if target then
-			local hum = target:FindFirstChildOfClass("Humanoid")
-			if not hum or hum.Health <= 0 then
-				watchKill(target)
+			local tHum = target:FindFirstChildOfClass("Humanoid")
+			if not tHum or tHum.Health <= 0 or not target.Parent then
+				Farm.Stats.kills += 1
+				if Farm.CollectCorpses and target.Name ~= "Gyakusatsu" then
+					Farm.CorpseDrop = { model = target, name = target.Name, t = tick() }
+				end
+				Farm.CurrentTarget = nil
 				target = nil
 			end
 		end
@@ -625,15 +565,15 @@ local function loop()
 
 		if target then
 			local part = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
-			local _, hrp = character()
-			if part and hrp then
+			if part then
 				local dist = (part.Position - hrp.Position).Magnitude
-				if dist > 6 then
-					flyTo(part.Position, dt)
-				elseif tick() - Farm.LastAttack >= math.clamp(Farm.FarmDelay, 0.15, 5) then
+				if dist > 25 then
+					teleportTo(part.CFrame + Vector3.new(0, 2, 0))
+				elseif dist > 8 then
+					teleportTo(part.CFrame + Vector3.new(0, 2, 0))
+				elseif tick() - Farm.LastAttack >= Farm.FarmDelay then
 					pcall(attackOnce, target)
 				end
-				watchKill(target)
 			end
 		end
 
@@ -646,23 +586,21 @@ function Farm.Start()
 	Farm.Enabled = true
 	refreshPlayerChars()
 	Farm.FetchStages()
+	getAuthKey()
 	setNoclip(Farm.Noclip)
-	pcall(applyLoadout)
-	local st = currentStageInfo()
+	Farm._rangedOn = false
+	Farm.LastEquip = 0
 	Farm._task = task.spawn(function()
 		local ok, err = pcall(loop)
 		if not ok then
-			warn("[Autofarm] loop crashed:", err)
+			warn("[Autofarm] crashed:", err)
 			Farm.Enabled = false
 		end
 	end)
-	print("[Autofarm] started"
-		.. " | group=" .. tostring(Farm.Group)
-		.. " | quinque=" .. tostring(Farm.Quinque)
-		.. " | stage=" .. tostring(Farm.Stage)
-		.. " | mode=" .. tostring(Farm.WeaponMode)
-		.. " | stages=" .. tostring(#Farm.AvailableStages)
-		.. (st and (" | nick=" .. tostring(st.nick)) or ""))
+	print("[Autofarm] started | group=" .. tostring(Farm.Group)
+		.. " | stage=" .. tostring(Farm.Stage) .. "/" .. stageWord()
+		.. " | range=" .. tostring(Farm.RangeMode)
+		.. " | stages=" .. #Farm.AvailableStages)
 end
 
 function Farm.Stop()
@@ -676,49 +614,63 @@ end
 
 function Farm.ApplyLoadoutNow()
 	Farm.FetchStages()
-	appliedQuinque = nil
-	appliedMode = nil
-	pcall(applyLoadout)
-	pcall(clickStageInHud, Farm.Stage)
+	getAuthKey()
+	Farm.LastEquip = 0
+	Farm._rangedOn = false
+	pcall(ensureEquip)
+	if Farm.RangeMode then
+		-- wait briefly for equip then switch
+		task.delay(0.8, function()
+			if hasEquip() then
+				local folder = pf()
+				local can = folder and folder:FindFirstChild("CanToggleWep")
+				if can and can.Value and readyCD("SpecialBonusCD") then
+					pressKey("C")
+					Farm._rangedOn = true
+					Farm.LastRange = tick()
+				end
+			end
+		end)
+	end
+	if Farm.AutoMask then
+		pressKey("M")
+		Farm.LastMask = tick()
+	end
+	if Farm.AutoArata then
+		pressKey("0")
+		Farm.LastArata = tick()
+	end
 	print("[Autofarm] loadout", Farm.Status())
 end
 
 function Farm.ForceMask()
-	Farm.LastMask = 0
-	local folder = pf()
-	local mask = folder and folder:FindFirstChild("Mask")
-	if mask and mask.Value then
-		print("[Autofarm] mask already on")
-		return
-	end
-	tapKey("M")
+	pressKey("M")
 	Farm.LastMask = tick()
-	print("[Autofarm] mask tapped (M)")
+	print("[Autofarm] mask (M)")
 end
 
 function Farm.OpenArata()
-	tapKey("0")
+	pressKey("0")
 	Farm.LastArata = tick()
-	print("[Autofarm] arata tapped (0)")
+	print("[Autofarm] arata (0)")
 end
 
 function Farm.Status()
 	local st = currentStageInfo()
 	return string.format(
-		"on=%s target=%s kills=%d attacks=%d collects=%d stages=%d cur=%s",
+		"on=%s target=%s kills=%d attacks=%d collects=%d stage=%s ranged=%s key=%s",
 		tostring(Farm.Enabled),
 		Farm.CurrentTarget and Farm.CurrentTarget.Name or "-",
-		Farm.Stats.kills,
-		Farm.Stats.attacks,
-		Farm.Stats.collects,
-		#Farm.AvailableStages,
-		tostring(Farm.Stage) .. (st and ("/" .. tostring(st.nick)) or "")
+		Farm.Stats.kills, Farm.Stats.attacks, Farm.Stats.collects,
+		tostring(Farm.Stage) .. (st and ("/" .. tostring(st.nick)) or ""),
+		tostring(Farm._rangedOn),
+		Farm.RemoteKey and (#Farm.RemoteKey .. "ch") or "?"
 	)
 end
 
--- init stage list once
 task.defer(function()
 	Farm.FetchStages()
+	getAuthKey()
 end)
 
 return Farm

@@ -758,6 +758,7 @@ local function attackOnce(target)
 end
 
 -- ===================== main =====================
+local reputationTick
 local function stop()
 	Farm.Enabled = false
 	Farm.CurrentTarget = nil
@@ -941,6 +942,7 @@ function Farm.Start()
 Farm._rangedOn = false
 	appliedMode = nil
 	Farm.LastEquip = 0
+	Farm.LastCashout = tick()
 
 	-- open mask + arata immediately (no throttle wait)
 	Farm.LastMask = 0
@@ -1172,12 +1174,24 @@ end
 
 -- typ=true → get quest, typ=false → cashout
 local function getQuest(typ)
+	print("[Autofarm] rep getQuest typ=", typ)
 	local remotes = getRemotes()
 	if not remotes then return end
 	local npc = getQuestNPC()
-	if not npc or not npc:FindFirstChild("HumanoidRootPart") then return end
+	if not npc or not npc:FindFirstChild("HumanoidRootPart") then
+		print("[Autofarm] rep npc missing")
+		return
+	end
 
 	teleportTo(npc.HumanoidRootPart.CFrame)
+	local _, hrp = character()
+	local dist = hrp and (npc.HumanoidRootPart.Position - hrp.Position).Magnitude or 999999
+	if hrp and dist > 20 then
+		pcall(function() hrp.CFrame = npc.HumanoidRootPart.CFrame end)
+		dist = (npc.HumanoidRootPart.Position - hrp.Position).Magnitude
+	end
+	print("[Autofarm] rep dist=", math.floor(dist))
+
 	pcall(function()
 		remotes.Ally.AllyInfo:InvokeServer()
 	end)
@@ -1188,9 +1202,10 @@ local function getQuest(typ)
 		pcall(function() fireclickdetector(cd) end)
 	end
 
-	local _, hrp = character()
-	if not Farm.Enabled or not hrp then return end
-	if (npc.HumanoidRootPart.Position - hrp.Position).Magnitude > 20 then return end
+	if not Farm.Enabled or not hrp or dist > 20 then
+		print("[Autofarm] rep abort")
+		return
+	end
 
 	if typ then
 		local remote = remotes:FindFirstChild(npc.Name)
@@ -1199,15 +1214,19 @@ local function getQuest(typ)
 			pcall(function() taskRf:InvokeServer() end)
 			task.wait(0.2)
 			pcall(function() taskRf:InvokeServer() end)
+			print("[Autofarm] rep quest ok")
+		else
+			print("[Autofarm] rep no Task remote")
 		end
 	else
 		pcall(function() remotes.ReputationCashOut:InvokeServer() end)
 		Farm.LastCashout = tick()
+		print("[Autofarm] rep cashout done")
 	end
 end
 
 -- called from main loop — same condition as working.lua farm while
-local function reputationTick()
+function reputationTick()
 	local folder = pf()
 	if not folder then return false end
 	local cq = folder:FindFirstChild("CurrentQuest")
@@ -1227,11 +1246,13 @@ local function reputationTick()
 	end
 
 	if Farm.ReputationFarm and (missing or done) then
+		print("[Autofarm] rep needQuest miss=", missing, " done=", done)
 		getQuest(true)
 		return true
 	elseif Farm.ReputationCashout and tick() - Farm.LastCashout > 7200 then
+		print("[Autofarm] rep needCashout")
 		getQuest(false)
-		return true
+		return false
 	end
 	return false
 end

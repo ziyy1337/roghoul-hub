@@ -1456,8 +1456,10 @@ function library:new_window(cfg)
         end;
         --
         local left = utility.create("Square", {Transparency = 0,Filled = false,Thickness = 1,ZIndex = 4,Parent = page,Size = UDim2.new(0.5, -14, 1, -10);});
+        left:MakeScrollable()
         left:AddListLayout(15)
         local right = utility.create("Square", {Transparency = 0,Filled = false,Thickness = 1,Parent = page,ZIndex = 3,Size = UDim2.new(0.5, -14, 1, -10),Position = UDim2.new(0.5, 14, 0, 0);});
+        right:MakeScrollable()
         right:AddListLayout(15)
         -- functions
         utility.connect(page_button.MouseButton1Click, function() -- ignore

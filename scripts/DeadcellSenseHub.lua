@@ -77,7 +77,7 @@ playerEsp:new_colorpicker({
 })
 
 local npcSec = visuals:new_section({ name = "NPCs", size = "Fill", side = "right" })
-npcSec:new_toggle({ name = "Enabled", flag = "npc_enabled", state = true, callback = function(s) NpcEsp.Enabled = s end })
+npcSec:new_toggle({ name = "Enabled", flag = "npc_enabled", state = false, callback = function(s) NpcEsp.Enabled = s end })
 npcSec:new_toggle({ name = "Names", flag = "npc_names", state = true, callback = function(s) NpcEsp.ShowNames = s end })
 npcSec:new_toggle({ name = "Health", flag = "npc_hp", state = true, callback = function(s) NpcEsp.ShowHealth = s end })
 npcSec:new_toggle({ name = "Boxes", flag = "npc_box", state = true, callback = function(s) NpcEsp.ShowBox = s end })

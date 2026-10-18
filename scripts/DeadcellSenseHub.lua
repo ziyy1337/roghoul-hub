@@ -44,7 +44,7 @@ playerEsp:new_toggle({
 	state = true,
 	callback = function(state)
 		enemy.enabled = state
-		if state then pcall(function() Sense.Load() end) end
+		if state then pcall(function() Sense.Load() end) -- errors here are isolated end
 	end,
 })
 playerEsp:new_toggle({ name = "Box", flag = "esp_box", state = true, callback = function(s) enemy.box = s end })
@@ -597,6 +597,6 @@ menu:new_toggle({
 	end,
 })
 
-pcall(function() Sense.Load() end)
+pcall(function() Sense.Load() end) -- errors here are isolated
 
 return library, Sense, NpcEsp, GyakuEsp, Aim, Farm

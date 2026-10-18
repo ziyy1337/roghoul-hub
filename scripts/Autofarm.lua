@@ -789,6 +789,29 @@ local function loop()
 	end
 end
 
+local hitSpoofInstalled = false
+local function installHitSpoof()
+	if hitSpoofInstalled or not hookmetamethod then return end
+	hitSpoofInstalled = true
+	local ok = pcall(function()
+		local old = hookmetamethod(game, "__index", newcclosure(function(self, key)
+			if not checkcaller() and key == "Hit" and Farm.Enabled then
+				local target = Farm.CurrentTarget
+				local part = target and (target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart"))
+				if part and typeof(self) == "Instance" and self.ClassName == "PlayerMouse" then
+					local cam = Workspace.CurrentCamera
+					if cam then
+						return CFrame.new(part.Position) * (cam.CFrame - cam.CFrame.Position)
+					end
+					return CFrame.new(part.Position)
+				end
+			end
+			return old(self, key)
+		end))
+	end)
+	if ok then print("[Autofarm] Mouse.Hit spoof installed") else warn("[Autofarm] Mouse.Hit spoof failed") end
+end
+
 function Farm.Start()
 	if Farm.Enabled then return end
 	Farm.Enabled = true
@@ -796,6 +819,7 @@ function Farm.Start()
 	Farm.FetchStages()
 	getAuthKey()
 	setNoclip(Farm.Noclip)
+	installHitSpoof()
 Farm._rangedOn = false
 	appliedMode = nil
 	Farm.LastEquip = 0
@@ -1114,31 +1138,5 @@ task.defer(function()
 	getAuthKey()
 end)
 
-
--- Spoof Mouse.Hit to current target while farming (ranged uses camera ray / MH())
-task.defer(function()
-	if not hookmetamethod then return end
-	local ok = pcall(function()
-		local mouse = LocalPlayer:GetMouse()
-		local old = hookmetamethod(game, "__index", newcclosure(function(self, key)
-			if not checkcaller() and key == "Hit" and Farm.Enabled then
-				local target = Farm.CurrentTarget
-				local part = target and (target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart"))
-				if part and typeof(self) == "Instance" and self.ClassName == "PlayerMouse" then
-					local cam = Workspace.CurrentCamera
-					if cam then
-						return CFrame.new(part.Position) * (cam.CFrame - cam.CFrame.Position)
-					end
-					return CFrame.new(part.Position)
-				end
-			end
-			return old(self, key)
-		end))
-		print("[Autofarm] Mouse.Hit spoof installed")
-	end)
-	if not ok then
-		warn("[Autofarm] Mouse.Hit spoof failed")
-	end
-end)
 
 return Farm

@@ -187,6 +187,18 @@ local drawing = {} do
         return touching
     end
 
+    -- cattoware/ScrollingFrame-style: show when any edge overlaps the column,
+    -- hide only when fully outside. Full containment (istouching) makes tall
+    -- sections pop in/out mid-scroll and never show while partially visible.
+    local function isintersecting(pos1, size1, pos2, size2)
+        return not (
+            pos1.Y + size1.Y <= pos2.Y
+            or pos1.Y >= pos2.Y + size2.Y
+            or pos1.X + size1.X <= pos2.X
+            or pos1.X >= pos2.X + size2.X
+        )
+    end
+
     local objchildren = {}
     local objmts = {}
     local objvisibles = {}
@@ -242,10 +254,6 @@ local drawing = {} do
         local current = scrollpositions[mt] or 0
         local delta = newoffset - current
 
-        if delta == 0 then
-            return false
-        end
-
         scrollpositions[mt] = newoffset
 
         local colobj = mtobjs[mt]
@@ -257,18 +265,24 @@ local drawing = {} do
         local colsize = colobj.Size
 
         for _, object in next, objchildren[mt] do
-            local newpos = object.Position + Vector2.new(0, delta)
-            childrenposupdates[objmts[object]](objmts[object], newpos)
-            object.Position = newpos
+            local newpos = object.Position
+            if delta ~= 0 then
+                newpos = object.Position + Vector2.new(0, delta)
+                childrenposupdates[objmts[object]](objmts[object], newpos)
+                object.Position = newpos
+            end
 
-            local visible = istouching(newpos, object.Size, colpos, colsize)
+            local visible = isintersecting(newpos, object.Size, colpos, colsize)
             if object.Visible ~= visible then
                 object.Visible = visible
-                childrenvisupdates[objmts[object]](objmts[object], visible)
+                local visupdate = childrenvisupdates[objmts[object]]
+                if visupdate then
+                    visupdate(objmts[object], visible)
+                end
             end
         end
 
-        return true
+        return delta ~= 0
     end
 
     local function startscrollanimator()
@@ -289,9 +303,9 @@ local drawing = {} do
                     local current = scrollpositions[mt] or 0
                     local delta = clamped - current
 
-                    if math.abs(delta) > 0.4 then
-                        local move = delta * math.clamp(dt * 16, 0, 1)
-                        if math.abs(clamped - (current + move)) < 0.4 then
+                    if math.abs(delta) > 0.35 then
+                        local move = delta * math.clamp(dt * 28, 0, 1)
+                        if math.abs(clamped - (current + move)) < 0.35 then
                             move = delta
                         end
                         applyscrolloffset(mt, current + move)
@@ -479,7 +493,8 @@ local drawing = {} do
 
                     -- do NOT enable ClipsDescendants here: the Parent handler would hide
                     -- overflow children immediately (sections taller than the column).
-                    -- Visibility is driven by applyscrolloffset while scrolling.
+                    -- Visibility is driven by applyscrolloffset (intersection) while scrolling.
+                    applyscrolloffset(self, 0)
 
                     refreshscrolling = function()
                         scrolltargets[self] = 0
@@ -489,10 +504,15 @@ local drawing = {} do
                     self.InputChanged:Connect(function(input)
                         if input.UserInputType == Enum.UserInputType.MouseWheel then
                             local z = input.Position.Z
-                            local colsize = mtobjs[self].Size
-                            local step = math.max(50, colsize.Y * 0.22) * math.clamp(math.abs(z), 1, 3)
                             local current = scrollpositions[self] or 0
-                            local target = clampscrolloffset(self, z > 0 and (current + step) or (current - step))
+                            -- fixed notch like ScrollingFrame; |z| is usually 1
+                            local step = 90 * math.clamp(math.abs(z), 1, 3)
+                            local sign = z > 0 and 1 or -1
+                            local target = clampscrolloffset(self, current + step * sign)
+                            -- apply most of the notch immediately (native wheel feel),
+                            -- leave a little for the Heartbeat ease
+                            local instant = clampscrolloffset(self, current + (step * 0.65) * sign)
+                            applyscrolloffset(self, instant)
                             scrolltargets[self] = target
                             startscrollanimator()
                         end
@@ -932,6 +952,14 @@ local drawing = {} do
                         obj.Position = newpos
 
                         customproperties.AbsolutePosition = newpos
+
+                        if scrollobjs[v] and not custompropertygets[mtobjs[v]]("ClipsDescendants") then
+                            local colobj = mtobjs[v]
+                            local visible = isintersecting(newpos, obj.Size, colobj.Position, colobj.Size)
+                            if obj.Visible ~= visible then
+                                obj.Visible = visible
+                            end
+                        end
 
                         changechildrenpos(self, newpos)
                     end

@@ -453,8 +453,11 @@ farmTrain:new_toggle({
 	state = false,
 	callback = function(s)
 		Farm.AutoTrainer = s
-		if Farm.Enabled then
-			if s then Farm.TrainLoop() else Farm.StopTrain() end
+		-- works without Start Autofarm
+		if s then
+			Farm.TrainLoop()
+		else
+			Farm.StopTrain()
 		end
 	end,
 })

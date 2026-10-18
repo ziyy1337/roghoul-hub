@@ -265,59 +265,7 @@ local function setNoclip(on)
 	end
 end
 
--- Hide HRP CFrame spam; ALWAYS re-enable listeners (fixes noclip leak)
-local function withStealth(fn)
-	if not Farm.Noclip then
-		return fn()
-	end
-	local hidden = {}
-	local decoy
-	local ok, err = pcall(function()
-		local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not hrp then
-			error("no hrp")
-		end
-		decoy = Instance.new("Part")
-		decoy.Name = string.rep("z", math.random(6, 10))
-		decoy.Size = Vector3.new(0.05, 0.05, 0.05)
-		decoy.Transparency = 1
-		decoy.Anchored = true
-		decoy.CanCollide = false
-		decoy.CFrame = hrp.CFrame
-		decoy.Parent = workspace
-
-		for _, signal in ipairs({ workspace.ChildAdded, workspace.DescendantAdded }) do
-			pcall(function()
-				for _, conn in ipairs(getconnections(signal)) do
-					if conn.Enabled then
-						conn:Disable()
-						table.insert(hidden, conn)
-					end
-				end
-			end)
-		end
-	end)
-
-	local result
-	if ok then
-		result = fn()
-	end
-
-	-- always restore
-	for _, conn in ipairs(hidden) do
-		pcall(function() conn:Enable() end)
-	end
-	if decoy then
-		pcall(function() decoy:Destroy() end)
-	end
-
-	if not ok then
-		return fn()
-	end
-	return result
-end
-
--- ===================== teleport — exact working.lua fly method =====================
+-- ===================== teleport — working.lua CFrame tween (no stealth; stealth froze the game) =====================
 local function teleportTo(pos)
 	local c, hrp, hum = character()
 	if not hrp then return end
@@ -326,33 +274,31 @@ local function teleportTo(pos)
 		pos = CFrame.new(pos)
 	end
 
-	withStealth(function()
-		local val = Instance.new("CFrameValue")
-		val.Value = hrp.CFrame
-		local dist = (hrp.Position - pos.p).Magnitude
-		local tween = TweenService:Create(
-			val,
-			TweenInfo.new(dist / math.clamp(Farm.TeleportSpeed, 30, 250), Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, 0),
-			{ Value = pos }
-		)
-		tween:Play()
-		local completed = false
-		tween.Completed:Connect(function() completed = true end)
-		while not completed do
-			if not Farm.Enabled then tween:Cancel() break end
-			local ch = LocalPlayer.Character
-			if not ch or not ch:FindFirstChild("HumanoidRootPart") or ch.Humanoid.Health <= 0 then
-				tween:Cancel()
-				break
-			end
-			ch.HumanoidRootPart.CFrame = val.Value
-			if Farm.Noclip then
-				ch.HumanoidRootPart.CanCollide = false
-			end
-			task.wait()
+	local val = Instance.new("CFrameValue")
+	val.Value = hrp.CFrame
+	local dist = (hrp.Position - pos.p).Magnitude
+	local tween = TweenService:Create(
+		val,
+		TweenInfo.new(math.max(dist / math.clamp(Farm.TeleportSpeed, 30, 250), 0.08), Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, 0),
+		{ Value = pos }
+	)
+	tween:Play()
+	local completed = false
+	tween.Completed:Connect(function() completed = true end)
+	while not completed do
+		if not Farm.Enabled then tween:Cancel() break end
+		local ch = LocalPlayer.Character
+		if not ch or not ch:FindFirstChild("HumanoidRootPart") or ch.Humanoid.Health <= 0 then
+			tween:Cancel()
+			break
 		end
-		val:Destroy()
-	end)
+		ch.HumanoidRootPart.CFrame = val.Value
+		if Farm.Noclip then
+			ch.HumanoidRootPart.CanCollide = false
+		end
+		task.wait()
+	end
+	val:Destroy()
 end
 
 -- ===================== loadout =====================
@@ -1006,16 +952,20 @@ end
 
 function Farm.TrainLoop()
 	if Farm._trainTask then return end
+	Farm.AutoTrainer = true
 	Farm._trainTask = task.spawn(function()
-		while Farm.Enabled and Farm.AutoTrainer do
+		-- runs even when autofarm Start is not pressed
+		while Farm.AutoTrainer do
 			pcall(trainCycle)
 			task.wait(1)
 		end
 		Farm._trainTask = nil
 	end)
+	print("[Autofarm] trainer loop ON")
 end
 
 function Farm.StopTrain()
+	Farm.AutoTrainer = false
 	if Farm._tsConn and Farm._tsConn.Connected then
 		pcall(function() Farm._tsConn:Disconnect() end)
 	end
@@ -1023,6 +973,7 @@ function Farm.StopTrain()
 		task.cancel(Farm._trainTask)
 		Farm._trainTask = nil
 	end
+	print("[Autofarm] trainer loop OFF")
 end
 
 -- ===================== Reputation (working.lua getQuest) =====================

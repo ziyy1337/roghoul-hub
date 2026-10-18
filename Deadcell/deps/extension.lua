@@ -363,86 +363,38 @@ local drawing = {} do
                     -- Clipping only kicks in on the first real wheel scroll below.
 
                     local function scroll(amount)
-                        local totalclippedobjs, currentclippedobj, docontinue = 0, nil, false
+                        -- Fixed-step clamped scroll. The old section-jump math looked up the
+                        -- "closest" child after the move and crashed on nil when the first
+                        -- section was taller than a single step (left Autofarm column).
+                        local step = 55
+                        local colpos = mtobjs[self].Position
+                        local colsize = mtobjs[self].Size
+                        local contentheight = listcontents[self] or 0
+                        local minscroll = math.min(0, colsize.Y - contentheight)
+                        local current = scrollpositions[self] or 0
+                        local newoffset = math.clamp(current + (amount == 1 and -step or step), minscroll, 0)
+                        local delta = newoffset - current
 
-                        for i, object in next, listchildren[self] do
-                            if amount == 1 then
-                                if object.Position.Y > mtobjs[self].Position.Y then
-                                    if not istouching(object.Position, object.Size, mtobjs[self].Position, mtobjs[self].Size) then
-                                        if not currentclippedobj then
-                                            currentclippedobj = object
-                                        end
-
-                                        totalclippedobjs = totalclippedobjs + 1
-                                        docontinue = true
-                                    end
-                                end
-                            end
-
-                            if amount == -1 then
-                                if object.Position.Y <= mtobjs[self].Position.Y then
-                                    if not istouching(object.Position, object.Size, mtobjs[self].Position, mtobjs[self].Size) then
-                                        currentclippedobj = object
-                                        totalclippedobjs = totalclippedobjs + 1
-                                        docontinue = true
-                                    end
-                                end
-                            end
+                        if delta == 0 then
+                            return false
                         end
 
-                        if docontinue then
-                            if amount > 0 then
-                                local poschange = -(currentclippedobj.Size.Y + objpaddings[self])
-                                local closestobj
+                        scrollpositions[self] = newoffset
 
-                                for i, object in next, objchildren[self] do
-                                    if istouching(object.Position + Vector2.new(0, poschange), object.Size, mtobjs[self].Position, mtobjs[self].Size) then
-                                        closestobj = object
-                                        break
-                                    end
-                                end
+                        for i, object in next, objchildren[self] do
+                            childrenposupdates[objmts[object]](objmts[object], object.Position + Vector2.new(0, delta))
+                            object.Position = object.Position + Vector2.new(0, delta)
 
-                                local diff = (Vector2.new(0, mtobjs[self].Position.Y) - Vector2.new(0, (closestobj.Position.Y + poschange + objpaddings[self]))).magnitude
-
-                                for i, object in next, objchildren[self] do
-                                    if not istouching(object.Position + Vector2.new(0, poschange - diff + objpaddings[self]), object.Size, mtobjs[self].Position, mtobjs[self].Size) then
-                                        object.Visible = false
-                                        childrenvisupdates[objmts[object]](objmts[object], false)
-                                    else
-                                        object.Visible = true
-                                        childrenvisupdates[objmts[object]](objmts[object], true)
-                                    end
-                                end
-
-                                scrollpositions[self] = scrollpositions[self] + (poschange - diff + objpaddings[self])
-
-                                for i, object in next, objchildren[self] do
-                                    childrenposupdates[objmts[object]](objmts[object], object.Position + Vector2.new(0, poschange - diff + objpaddings[self]))
-                                    object.Position = object.Position + Vector2.new(0, poschange - diff + objpaddings[self])
-                                end
+                            if istouching(object.Position, object.Size, colpos, colsize) then
+                                object.Visible = true
+                                childrenvisupdates[objmts[object]](objmts[object], true)
                             else
-                                local poschange = currentclippedobj.Size.Y + objpaddings[self]
-
-                                for i, object in next, objchildren[self] do
-                                    if not istouching(object.Position + Vector2.new(0, poschange), object.Size, mtobjs[self].Position, mtobjs[self].Size) then
-                                        object.Visible = false
-                                        childrenvisupdates[objmts[object]](objmts[object], false)
-                                    else
-                                        object.Visible = true
-                                        childrenvisupdates[objmts[object]](objmts[object], true)
-                                    end
-                                end
-
-                                scrollpositions[self] = scrollpositions[self] + poschange
-
-                                for i, object in next, objchildren[self] do
-                                    childrenposupdates[objmts[object]](objmts[object], object.Position + Vector2.new(0, poschange))
-                                    object.Position = object.Position + Vector2.new(0, poschange)
-                                end
+                                object.Visible = false
+                                childrenvisupdates[objmts[object]](objmts[object], false)
                             end
                         end
 
-                        return docontinue
+                        return true
                     end
 
                     refreshscrolling = function()

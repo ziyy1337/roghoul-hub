@@ -326,7 +326,7 @@ end
 
 local farm = window:new_page({ name = "Autofarm" })
 
-local farmMain = farm:new_section({ name = "General", size = "Fill" })
+local farmMain = farm:new_section({ name = "General", size = 300 })
 farmMain:new_button({
 	name = "Start Autofarm",
 	flag = "farm_start",
@@ -378,6 +378,72 @@ farmMain:new_slider({
 	default = 80,
 	text = "[value]",
 	callback = function(v) Farm.MoveSpeed = v end,
+})
+
+-- Attacks (Mouse1 always active) — matches user request
+local farmAtk = farm:new_section({ name = "Attacks (Mouse1 always active)", size = "Fill" })
+farmAtk:new_toggle({
+	name = "Attack E",
+	flag = "farm_atk_e",
+	state = false,
+	callback = function(s) Farm.AttackE = s end,
+})
+farmAtk:new_toggle({
+	name = "Attack R",
+	flag = "farm_atk_r",
+	state = false,
+	callback = function(s) Farm.AttackR = s end,
+})
+farmAtk:new_toggle({
+	name = "Attack F",
+	flag = "farm_atk_f",
+	state = false,
+	callback = function(s) Farm.AttackF = s end,
+})
+farmAtk:new_toggle({
+	name = "Attack C",
+	flag = "farm_atk_c",
+	state = false,
+	callback = function(s) Farm.AttackC = s end,
+})
+farmAtk:new_toggle({
+	name = "Range Mode",
+	flag = "farm_range_mode",
+	state = false,
+	callback = function(s)
+		Farm.RangeMode = s
+		if s then
+			Farm.WeaponMode = "Ranged"
+		end
+	end,
+})
+farmAtk:new_toggle({
+	name = "Auto Arata",
+	flag = "farm_arata",
+	state = false,
+	callback = function(s) Farm.AutoArata = s end,
+})
+farmAtk:new_toggle({
+	name = "Auto Arata Refill",
+	flag = "farm_arata_refill",
+	state = false,
+	callback = function(s) Farm.AutoArataRefill = s end,
+})
+farmAtk:new_toggle({
+	name = "Auto Mask",
+	flag = "farm_mask",
+	state = false,
+	callback = function(s) Farm.AutoMask = s end,
+})
+farmAtk:new_button({
+	name = "Equip Mask (M)",
+	flag = "farm_mask_now",
+	callback = function() Farm.ForceMask() end,
+})
+farmAtk:new_button({
+	name = "Open Arata (0)",
+	flag = "farm_arata_now",
+	callback = function() Farm.OpenArata() end,
 })
 
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })

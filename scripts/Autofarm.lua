@@ -32,11 +32,24 @@ local Farm = {
 	Stage = "1",         -- fetched from HUD; "1".."N"
 	WeaponMode = "Auto", -- Auto | Blade | Ranged
 
+	-- Attacks (Mouse1 always active)
+	AttackE = false,
+	AttackR = false,
+	AttackF = false,
+	AttackC = false,
+	RangeMode = false,       -- switch to range (C) after quinque/kagune equip
+	AutoArata = false,       -- open with 0
+	AutoArataRefill = false, -- re-open when Stam empty
+	AutoMask = false,        -- equip mask with M
+
 	-- runtime
 	CurrentTarget = nil,
 	CorpseDrop = nil,
 	LastAttack = 0,
 	LastSpecial = 0,
+	LastArata = 0,
+	LastMask = 0,
+	LastRange = 0,
 	Stats = { attacks = 0, collects = 0, kills = 0 },
 	AvailableStages = {}, -- { {id="1", label="Stage 1", modes=2, nick="IXA"}, ... }
 	_task = nil,
@@ -235,9 +248,11 @@ local function applyLoadout()
 		appliedStage = Farm.Stage
 	end
 
-	-- Weapon mode (C form): Blade vs Ranged
+	-- Weapon mode: Range Mode forces Ranged (C) after equip
 	local want = Farm.WeaponMode
-	if want == "Auto" then
+	if Farm.RangeMode then
+		want = "Ranged"
+	elseif want == "Auto" then
 		want = (st and (st.modes or 1) >= 2) and "Ranged" or "Blade"
 	end
 	if want ~= appliedMode then
@@ -245,8 +260,8 @@ local function applyLoadout()
 		local can = folder2 and folder2:FindFirstChild("CanToggleWep")
 		if want == "Ranged" and can and can.Value and readyCD("SpecialBonusCD") then
 			tapKey("C")
+			Farm.LastRange = tick()
 		elseif want == "Blade" and can and can.Value and readyCD("SpecialBonusCD") then
-			-- press C again only if we previously set Ranged
 			if appliedMode == "Ranged" then
 				tapKey("C")
 			end
@@ -254,9 +269,15 @@ local function applyLoadout()
 		appliedMode = want
 	end
 
-	-- Kagune: Q when stage selected and ghoul-ish
-	if Farm.KaguneOn and readyCD("ClickCD") then
-		-- reserved: no reliable "kagune off" state; toggle only when user forces Apply
+	-- keep Range Mode armed: if user toggled it on mid-run, re-press C
+	if Farm.RangeMode and tick() - Farm.LastRange > 3 then
+		local folder2 = pf()
+		local can = folder2 and folder2:FindFirstChild("CanToggleWep")
+		if can and can.Value and readyCD("SpecialBonusCD") then
+			tapKey("C")
+			Farm.LastRange = tick()
+			appliedMode = "Ranged"
+		end
 	end
 end
 
@@ -343,29 +364,79 @@ local function attackOnce(target)
 	end
 
 	local hit = MHAt(bone.Position)
+	-- Mouse1 always active
 	fireKey("Mouse1", "Down", hit)
 	task.wait(0.04)
 	fireKey("Mouse1", "Up", hit)
 	Farm.LastAttack = tick()
 	Farm.Stats.attacks += 1
 
-	if Farm.AutoAttack then
-		local special = nil
-		if readyCD("Special1CD") and tick() - Farm.LastSpecial > 1.0 then
-			special = "E"
-		elseif readyCD("Special2CD") and tick() - Farm.LastSpecial > 2.0 then
-			special = "R"
-		elseif readyCD("Special3CD") and tick() - Farm.LastSpecial > 3.0 then
-			special = "F"
-		end
-		if special then
-			fireKey(special, "Down", hit)
-			task.wait(0.04)
-			fireKey(special, "Up", hit)
-			Farm.LastSpecial = tick()
-		end
+	-- optional specials (individual toggles)
+	local specials = {}
+	if Farm.AttackE and readyCD("Special1CD") and tick() - Farm.LastSpecial > 1.0 then
+		table.insert(specials, { key = "E", cd = 1.0 })
+	end
+	if Farm.AttackR and readyCD("Special2CD") and tick() - Farm.LastSpecial > 2.0 then
+		table.insert(specials, { key = "R", cd = 2.0 })
+	end
+	if Farm.AttackF and readyCD("Special3CD") and tick() - Farm.LastSpecial > 3.0 then
+		table.insert(specials, { key = "F", cd = 3.0 })
+	end
+	if Farm.AttackC and readyCD("SpecialBonusCD") and tick() - Farm.LastSpecial > 2.5 then
+		table.insert(specials, { key = "C", cd = 2.5 })
+	end
+
+	-- fire at most one special per swing (keeps CD logic simple)
+	local choice = specials[1]
+	if choice then
+		fireKey(choice.key, "Down", hit)
+		task.wait(0.04)
+		fireKey(choice.key, "Up", hit)
+		Farm.LastSpecial = tick()
 	end
 	return true
+end
+
+-- Arata / mask helpers (keys as user specified: 0 = arata, M = mask)
+local function ensureMask()
+	if not Farm.AutoMask then return end
+	if tick() - Farm.LastMask < 5 then return end
+	local folder = pf()
+	if not folder then return end
+	local mask = folder:FindFirstChild("Mask")
+	if mask and mask.Value then
+		-- already on
+		Farm.LastMask = tick()
+		return
+	end
+	tapKey("M")
+	Farm.LastMask = tick()
+end
+
+local function ensureArata()
+	if not (Farm.AutoArata or Farm.AutoArataRefill) then return end
+	if tick() - Farm.LastArata < 4 then return end
+
+	local folder = pf()
+	if not folder then return end
+	local sc = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("ServerControl")
+	local arataOn = sc and sc:FindFirstChild("ArataOn")
+	local stam = folder:FindFirstChild("ArataStat") and folder.ArataStat:FindFirstChild("Stam")
+	local stamVal = stam and tostring(stam.Value) or ""
+
+	local on = arataOn and arataOn.Value == true
+	local stamEmpty = (stamVal == "" or stamVal == "0")
+
+	if Farm.AutoArata and not on then
+		tapKey("0")
+		Farm.LastArata = tick()
+		return
+	end
+	if Farm.AutoArataRefill and on and stamEmpty then
+		-- refill = re-tap 0 / open again
+		tapKey("0")
+		Farm.LastArata = tick()
+	end
 end
 
 local function findTarget()
@@ -514,6 +585,10 @@ local function loop()
 			pcall(applyLoadout)
 		end
 
+		-- mask / arata upkeep
+		pcall(ensureMask)
+		pcall(ensureArata)
+
 		-- corpse run
 		if Farm.CorpseDrop and tick() - Farm.CorpseDrop.t < 15 then
 			local _, hrp = character()
@@ -555,7 +630,7 @@ local function loop()
 				local dist = (part.Position - hrp.Position).Magnitude
 				if dist > 6 then
 					flyTo(part.Position, dt)
-				elseif Farm.AutoAttack and tick() - Farm.LastAttack >= math.clamp(Farm.FarmDelay, 0.15, 5) then
+				elseif tick() - Farm.LastAttack >= math.clamp(Farm.FarmDelay, 0.15, 5) then
 					pcall(attackOnce, target)
 				end
 				watchKill(target)
@@ -606,6 +681,25 @@ function Farm.ApplyLoadoutNow()
 	pcall(applyLoadout)
 	pcall(clickStageInHud, Farm.Stage)
 	print("[Autofarm] loadout", Farm.Status())
+end
+
+function Farm.ForceMask()
+	Farm.LastMask = 0
+	local folder = pf()
+	local mask = folder and folder:FindFirstChild("Mask")
+	if mask and mask.Value then
+		print("[Autofarm] mask already on")
+		return
+	end
+	tapKey("M")
+	Farm.LastMask = tick()
+	print("[Autofarm] mask tapped (M)")
+end
+
+function Farm.OpenArata()
+	tapKey("0")
+	Farm.LastArata = tick()
+	print("[Autofarm] arata tapped (0)")
 end
 
 function Farm.Status()

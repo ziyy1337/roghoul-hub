@@ -1,22 +1,12 @@
 --// roghoul-hub // Deadcell + Sense + NPC ESP + Aim
 local RAW = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/"
-local RunService = game:GetService("RunService")
 
-local function req(path)
-	local src = game:HttpGet(RAW .. path)
-	local fn = loadstring(src)
-	if not fn then
-		error("compile failed: " .. path)
-	end
-	return fn()
-end
-
-local library = req("Deadcell/source_modified.lua")
-local Sense = req("scripts/esp/Sense/source.lua")
-local NpcEsp = req("scripts/esp/NpcEsp.lua")
-local GyakuEsp = req("scripts/GyakusatsuHeartESP.lua")
-local Aim = req("scripts/Aimbot.lua")
-local Farm = req("scripts/Autofarm.lua")
+local library = loadstring(game:HttpGet(RAW .. "Deadcell/source_modified.lua"))()
+local Sense = loadstring(game:HttpGet(RAW .. "scripts/esp/Sense/source.lua"))()
+local NpcEsp = loadstring(game:HttpGet(RAW .. "scripts/esp/NpcEsp.lua"))()
+local GyakuEsp = loadstring(game:HttpGet(RAW .. "scripts/GyakusatsuHeartESP.lua"))()
+local Aim = loadstring(game:HttpGet(RAW .. "scripts/Aimbot.lua"))()
+local Farm = loadstring(game:HttpGet(RAW .. "scripts/Autofarm.lua"))()
 
 Aim.UseBuiltinAimKey = false
 Aim.Enabled = false
@@ -24,9 +14,8 @@ Aim.SilentAim = false
 Aim.CameraAim = false
 GyakuEsp.Enabled = false
 
--- Sense off until user enables (avoids stack-overflow spam with hooks)
 local enemy = Sense.teamSettings.enemy
-enemy.enabled = false
+enemy.enabled = true
 enemy.box = true
 enemy.boxColor = { Color3.fromRGB(255, 80, 80), 1 }
 enemy.boxOutline = true
@@ -55,9 +44,7 @@ playerEsp:new_toggle({
 	state = true,
 	callback = function(state)
 		enemy.enabled = state
-		if state then
-			pcall(function() Sense.Load() end)
-		end
+		if state then pcall(function() Sense.Load() end) end
 	end,
 })
 playerEsp:new_toggle({ name = "Box", flag = "esp_box", state = true, callback = function(s) enemy.box = s end })
@@ -339,7 +326,7 @@ end
 
 local farm = window:new_page({ name = "Autofarm" })
 
-local farmMain = farm:new_section({ name = "General", size = 240 })
+local farmMain = farm:new_section({ name = "General", size = 300 })
 farmMain:new_button({
 	name = "Start Autofarm",
 	flag = "farm_start",
@@ -394,7 +381,7 @@ farmMain:new_slider({
 })
 
 -- Attacks (Mouse1 always active) — matches user request
-local farmAtk = farm:new_section({ name = "Attacks (Mouse1 always active)", size = 280 })
+local farmAtk = farm:new_section({ name = "Attacks (Mouse1 always active)", size = "Fill" })
 farmAtk:new_toggle({
 	name = "Attack E",
 	flag = "farm_atk_e",
@@ -454,45 +441,9 @@ farmAtk:new_button({
 	callback = function() Farm.ForceMask() end,
 })
 farmAtk:new_button({
-	name = "Open Arata (Zero)",
+	name = "Open Arata (0)",
 	flag = "farm_arata_now",
 	callback = function() Farm.OpenArata() end,
-})
-
-local farmTrain = farm:new_section({ name = "Training / Reputation", size = 200 })
-farmTrain:new_toggle({
-	name = "Auto Trainer",
-	flag = "farm_trainer",
-	state = false,
-	callback = function(s)
-		Farm.AutoTrainer = s
-		-- works without Start Autofarm
-		if s then
-			Farm.TrainLoop()
-		else
-			Farm.StopTrain()
-		end
-	end,
-})
-farmTrain:new_toggle({
-	name = "Reputation Farm",
-	flag = "farm_rep_farm",
-	state = false,
-	callback = function(s) Farm.ReputationFarm = s end,
-})
-farmTrain:new_toggle({
-	name = "Auto Reputation Cashout",
-	flag = "farm_rep_cash",
-	state = false,
-	callback = function(s) Farm.ReputationCashout = s end,
-})
-farmTrain:new_button({
-	name = "Print Train Status",
-	flag = "farm_train_status",
-	callback = function()
-		print("[Autofarm]", Farm.Status())
-		print("AutoTrainer=", Farm.AutoTrainer, "RepFarm=", Farm.ReputationFarm, "Cashout=", Farm.ReputationCashout)
-	end,
 })
 
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })
@@ -515,60 +466,11 @@ farmTarget:new_toggle({
 	state = false,
 	callback = function(s) Farm.PreferLowestHP = s end,
 })
-farmTarget:new_seperator({ name = "Bosses (z4gs)" })
-farmTarget:new_toggle({
-	name = "Gyakusatsu (lvl 1250+)",
-	flag = "boss_gya",
-	state = false,
-	callback = function(s) Farm.BossFarm["Gyakusatsu"] = s end,
-})
-farmTarget:new_toggle({
-	name = "Eto Yoshimura (1250+)",
-	flag = "boss_eto",
-	state = false,
-	callback = function(s) Farm.BossFarm["Eto Yoshimura"] = s end,
-})
-farmTarget:new_toggle({
-	name = "Koutarou Amon (750+)",
-	flag = "boss_amon",
-	state = false,
-	callback = function(s) Farm.BossFarm["Koutarou Amon"] = s end,
-})
-farmTarget:new_toggle({
-	name = "Nishiki Nishio (250+)",
-	flag = "boss_nishi",
-	state = false,
-	callback = function(s) Farm.BossFarm["Nishiki Nishio"] = s end,
-})
-farmTarget:new_slider({
-	name = "Distance from NPC",
-	flag = "farm_dist_npc",
-	min = 0,
-	max = 8,
-	default = 5,
-	text = "[value]",
-	callback = function(v) Farm.DistanceFromNpc = v end,
-})
-farmTarget:new_slider({
-	name = "Distance from Bosses",
-	flag = "farm_dist_boss",
-	min = 0,
-	max = 15,
-	default = 8,
-	text = "[value]",
-	callback = function(v) Farm.DistanceFromBoss = v end,
-})
-farmTarget:new_toggle({
-	name = "Skills on Bosses (E/R/F/C)",
-	flag = "farm_boss_skills",
-	state = true,
-	callback = function(s) Farm.SkillsOnBoss = s end,
-})
 farmTarget:new_seperator({ name = "Searches entire map (no range cap)" })
 
 local farmLoadout = farm:new_section({ name = "Loadout (auto)", size = 260 })
 farmLoadout:new_dropdown({
-	name = "Stage",
+	name = "Stage (from your HUD)",
 	flag = "farm_stage",
 	options = stageOpts,
 	default = stageOpts[2] or "1",
@@ -577,18 +479,20 @@ farmLoadout:new_dropdown({
 	end,
 })
 farmLoadout:new_dropdown({
+	name = "Quinque",
+	flag = "farm_quinque",
+	options = { "None", "IXA", "C-Katana", "Scorpion 1/56", "Narukami", "Custom" },
+	default = "IXA",
+	callback = function(v)
+		if v == "None" then Farm.Quinque = "None" else Farm.Quinque = v end
+	end,
+})
+farmLoadout:new_dropdown({
 	name = "Weapon Mode",
 	flag = "farm_wepmode",
 	options = { "Auto", "Blade", "Ranged" },
 	default = "Auto",
-	callback = function(v)
-		Farm.WeaponMode = v
-		if v == "Ranged" then
-			Farm.RangeMode = true
-		elseif v == "Blade" or v == "Auto" then
-			Farm.RangeMode = false
-		end
-	end,
+	callback = function(v) Farm.WeaponMode = v end,
 })
 farmLoadout:new_button({
 	name = "Refresh Stages",
@@ -620,14 +524,6 @@ farmMisc:new_button({
 	callback = function() print("[Autofarm]", Farm.Status()) end,
 })
 farmMisc:new_button({
-	name = "Show Quest / Stats",
-	flag = "farm_stats",
-	callback = function()
-		print("[Autofarm]", Farm.GetStatsText())
-		print("[Autofarm] Quest:", Farm.GetQuestText())
-	end,
-})
-farmMisc:new_button({
 	name = "List My Stages",
 	flag = "farm_list_stages",
 	callback = function()
@@ -636,16 +532,6 @@ farmMisc:new_button({
 		end
 	end,
 })
-
--- live stats ticker (menu-visible via console + flag)
-local lastStats = 0
-RunService.Heartbeat:Connect(function()
-	if not Farm.Enabled then return end
-	if tick() - lastStats < 8 then return end
-	lastStats = tick()
-	library.flags.farm_stats_text = Farm.GetStatsText()
-	print("[stats]", Farm.GetStatsText())
-end)
 
 ----------------------------------------------------------------
 -- SETTINGS
@@ -677,5 +563,6 @@ menu:new_toggle({
 	end,
 })
 
-	-- Sense loads only when "Enabled" is toggled on (see Visuals → Players)
-	return library, Sense, NpcEsp, GyakuEsp, Aim, Farm
+pcall(function() Sense.Load() end)
+
+return library, Sense, NpcEsp, GyakuEsp, Aim, Farm

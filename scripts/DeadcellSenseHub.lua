@@ -1,12 +1,22 @@
 --// roghoul-hub // Deadcell + Sense + NPC ESP + Aim
 local RAW = "https://raw.githubusercontent.com/ziyy1337/roghoul-hub/main/"
+local RunService = game:GetService("RunService")
 
-local library = loadstring(game:HttpGet(RAW .. "Deadcell/source_modified.lua"))()
-local Sense = loadstring(game:HttpGet(RAW .. "scripts/esp/Sense/source.lua"))()
-local NpcEsp = loadstring(game:HttpGet(RAW .. "scripts/esp/NpcEsp.lua"))()
-local GyakuEsp = loadstring(game:HttpGet(RAW .. "scripts/GyakusatsuHeartESP.lua"))()
-local Aim = loadstring(game:HttpGet(RAW .. "scripts/Aimbot.lua"))()
-local Farm = loadstring(game:HttpGet(RAW .. "scripts/Autofarm.lua"))()
+local function req(path)
+	local src = game:HttpGet(RAW .. path)
+	local fn = loadstring(src)
+	if not fn then
+		error("compile failed: " .. path)
+	end
+	return fn()
+end
+
+local library = req("Deadcell/source_modified.lua")
+local Sense = req("scripts/esp/Sense/source.lua")
+local NpcEsp = req("scripts/esp/NpcEsp.lua")
+local GyakuEsp = req("scripts/GyakusatsuHeartESP.lua")
+local Aim = req("scripts/Aimbot.lua")
+local Farm = req("scripts/Autofarm.lua")
 
 Aim.UseBuiltinAimKey = false
 Aim.Enabled = false
@@ -44,7 +54,9 @@ playerEsp:new_toggle({
 	state = true,
 	callback = function(state)
 		enemy.enabled = state
-		if state then pcall(function() Sense.Load() end) -- errors here are isolated end
+		if state then
+			pcall(function() Sense.Load() end)
+		end
 	end,
 })
 playerEsp:new_toggle({ name = "Box", flag = "esp_box", state = true, callback = function(s) enemy.box = s end })
@@ -502,6 +514,55 @@ farmTarget:new_toggle({
 	state = false,
 	callback = function(s) Farm.PreferLowestHP = s end,
 })
+farmTarget:new_seperator({ name = "Bosses (z4gs)" })
+farmTarget:new_toggle({
+	name = "Gyakusatsu (lvl 1250+)",
+	flag = "boss_gya",
+	state = false,
+	callback = function(s) Farm.BossFarm["Gyakusatsu"] = s end,
+})
+farmTarget:new_toggle({
+	name = "Eto Yoshimura (1250+)",
+	flag = "boss_eto",
+	state = false,
+	callback = function(s) Farm.BossFarm["Eto Yoshimura"] = s end,
+})
+farmTarget:new_toggle({
+	name = "Koutarou Amon (750+)",
+	flag = "boss_amon",
+	state = false,
+	callback = function(s) Farm.BossFarm["Koutarou Amon"] = s end,
+})
+farmTarget:new_toggle({
+	name = "Nishiki Nishio (250+)",
+	flag = "boss_nishi",
+	state = false,
+	callback = function(s) Farm.BossFarm["Nishiki Nishio"] = s end,
+})
+farmTarget:new_slider({
+	name = "Distance from NPC",
+	flag = "farm_dist_npc",
+	min = 0,
+	max = 8,
+	default = 5,
+	text = "[value]",
+	callback = function(v) Farm.DistanceFromNpc = v end,
+})
+farmTarget:new_slider({
+	name = "Distance from Bosses",
+	flag = "farm_dist_boss",
+	min = 0,
+	max = 15,
+	default = 8,
+	text = "[value]",
+	callback = function(v) Farm.DistanceFromBoss = v end,
+})
+farmTarget:new_toggle({
+	name = "Skills on Bosses (E/R/F/C)",
+	flag = "farm_boss_skills",
+	state = true,
+	callback = function(s) Farm.SkillsOnBoss = s end,
+})
 farmTarget:new_seperator({ name = "Searches entire map (no range cap)" })
 
 local farmLoadout = farm:new_section({ name = "Loadout (auto)", size = 260 })
@@ -558,6 +619,14 @@ farmMisc:new_button({
 	callback = function() print("[Autofarm]", Farm.Status()) end,
 })
 farmMisc:new_button({
+	name = "Show Quest / Stats",
+	flag = "farm_stats",
+	callback = function()
+		print("[Autofarm]", Farm.GetStatsText())
+		print("[Autofarm] Quest:", Farm.GetQuestText())
+	end,
+})
+farmMisc:new_button({
 	name = "List My Stages",
 	flag = "farm_list_stages",
 	callback = function()
@@ -566,6 +635,16 @@ farmMisc:new_button({
 		end
 	end,
 })
+
+-- live stats ticker (menu-visible via console + flag)
+local lastStats = 0
+RunService.Heartbeat:Connect(function()
+	if not Farm.Enabled then return end
+	if tick() - lastStats < 8 then return end
+	lastStats = tick()
+	library.flags.farm_stats_text = Farm.GetStatsText()
+	print("[stats]", Farm.GetStatsText())
+end)
 
 ----------------------------------------------------------------
 -- SETTINGS

@@ -28,6 +28,27 @@ local Farm = {
 	PreferNearest = true,
 	PreferLowestHP = false,
 
+	-- z4gs distances (applied like working.lua)
+	DistanceFromNpc = 5,   -- slider 0-8; used as lookVector * (-value)
+	DistanceFromBoss = 8,  -- Y offset above boss
+
+	-- boss farms (exact z4gs names + level gates)
+	BossFarm = {
+		["Gyakusatsu"] = false,
+		["Eto Yoshimura"] = false,
+		["Koutarou Amon"] = false,
+		["Nishiki Nishio"] = false,
+	},
+	BossLevel = {
+		["Gyakusatsu"] = 1250,
+		["Eto Yoshimura"] = 1250,
+		["Koutarou Amon"] = 750,
+		["Nishiki Nishio"] = 250,
+	},
+
+	-- skills on bosses only (z4gs): E/R/F/C when CanAct and CD ~= DownTime
+	SkillsOnBoss = true,
+
 	Quinque = "IXA", -- unused in UI; Stage drives equip
 	Stage = "One",         -- "One".."Six" (KeyEvent stage names)
 	WeaponMode = "Auto",   -- Auto | Blade | Ranged (restored from old menu)
@@ -449,43 +470,122 @@ local function classifyNPC(model)
 	return "Named"
 end
 
-local function findTarget()
+local function playerLevel()
+	local folder = pf()
+	local st = folder and folder:FindFirstChild("Stats")
+	local lv = st and st:FindFirstChild("Level")
+	return tonumber(lv and lv.Value) or 0
+end
+
+local function isBossName(name)
+	return name == "Gyakusatsu" or name == "Eto Yoshimura"
+		or name == "Koutarou Amon" or name == "Nishiki Nishio"
+end
+
+-- exact z4gs getNPC + boss toggles
+local function getNPC()
 	local _, hrp = character()
 	if not hrp then return nil end
-	local best, bestScore = nil, math.huge
 	local myPos = hrp.Position
-	for _, d in ipairs(Workspace:GetDescendants()) do
-		if d:IsA("Model") and not playerChars[d] then
-			local nm = d.Name
-			if not nm:find("Corpse", 1, true) and not nm:find("Mob", 1, true) then
-				local hum = d:FindFirstChildOfClass("Humanoid")
-				local part = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChild("Head")
-				if hum and part and hum.Health > 0 and hum.MaxHealth < 1e6 then
-					local dist = (part.Position - myPos).Magnitude
-					local group = classifyNPC(d)
-					local match = false
-					if Farm.Group == "Any" then
-						match = true
-					elseif Farm.Group == "Gyakusatsu" then
-						match = group == "Gyakusatsu" or nm == "Gyakusatsu" or (part.Parent and part.Parent.Name == "GyakusatsuSpawn")
-					elseif Farm.Group == group then
-						match = true
+	local level = playerLevel()
+
+	-- Gyakusatsu special path (z4gs)
+	if Farm.BossFarm["Gyakusatsu"] and level > (Farm.BossLevel["Gyakusatsu"] or 1250) then
+		local spawn = Workspace.NPCSpawns and Workspace.NPCSpawns:FindFirstChild("GyakusatsuSpawn")
+		if spawn then
+			local lowestHp, lowestModel = math.huge, nil
+			for _, v in ipairs(spawn:GetChildren()) do
+				if v.Name ~= "Mob" and v:FindFirstChildOfClass("Humanoid") then
+					local h = v.Humanoid.Health
+					if h < lowestHp then
+						lowestHp = h
+						lowestModel = v
 					end
-					if match then
-						local score = dist
-						if Farm.PreferLowestHP and not Farm.PreferNearest then
-							score = hum.Health * 0.01 + dist
-						end
-						if score < bestScore then
-							bestScore = score
-							best = d
+				end
+			end
+			if lowestModel then return lowestModel end
+			local g = spawn:FindFirstChild("Gyakusatsu")
+			if g then return g end
+		end
+	end
+
+	local nearest, nearestDist = nil, math.huge
+	local spawns = Workspace:FindFirstChild("NPCSpawns")
+	if not spawns then return nil end
+
+	-- group folder name from Farm.Group (z4gs uses GhoulSpawns etc.)
+	local groupName
+	if Farm.Group == "Human" then groupName = "HumanSpawns"
+	elseif Farm.Group == "Ghoul" then groupName = "GhoulSpawns"
+	elseif Farm.Group == "CCG" then groupName = "CCGSpawns"
+	elseif Farm.Group == "Aggro" then groupName = "AggroSpawns"
+	elseif Farm.Group == "Boss" then groupName = "BossSpawns"
+	end
+
+	for _, folder in ipairs(spawns:GetChildren()) do
+		if folder:IsA("Model") or folder:IsA("Folder") or folder:IsA("BasePart") then
+			local npc = folder:FindFirstChildOfClass("Model")
+			-- also check folder itself if it's the spawn mesh with model children
+			if not npc then
+				for _, child in ipairs(folder:GetChildren()) do
+					if child:IsA("Model") and child:FindFirstChild("Head") then
+						npc = child
+						break
+					end
+				end
+			end
+			if npc and npc:FindFirstChild("Head") and not npc:FindFirstChild("AC") then
+				local hum = npc:FindFirstChildOfClass("Humanoid")
+				if hum and hum.Health > 0 and hum.MaxHealth < 1e6 then
+					local inGroup = groupName and (npc.Parent and npc.Parent.Name == groupName)
+						or (folder.Name == groupName)
+					local bossHit = Farm.BossFarm[npc.Name]
+						and level >= (Farm.BossLevel[npc.Name] or 0)
+					if bossHit then
+						return npc -- z4gs returns boss immediately
+					end
+					if inGroup or (Farm.Group == "Any") then
+						if not playerChars[npc] then
+							local d = (npc.HumanoidRootPart.Position - myPos).Magnitude
+							if d < nearestDist then
+								nearest, nearestDist = npc, d
+							end
 						end
 					end
 				end
 			end
 		end
 	end
-	return best
+	return nearest
+end
+
+local function fireBossSkills()
+	if not Farm.SkillsOnBoss then return end
+	local folder = pf()
+	if not folder then return end
+	if not (folder:FindFirstChild("CanAct") and folder.CanAct.Value) then return end
+	-- z4gs: for each skill, if value ~= "DownTime" then pressKey
+	local map = {
+		{ key = "E", cd = "Special1CD" },
+		{ key = "R", cd = "Special2CD" },
+		{ key = "F", cd = "Special3CD" },
+		{ key = "C", cd = "SpecialBonusCD" },
+	}
+	for _, s in ipairs(map) do
+		local cd = folder:FindFirstChild(s.cd)
+		if cd and tostring(cd.Value) ~= "DownTime" and readyCD(s.cd) then
+			pressKey(s.key, MH())
+		end
+	end
+end
+
+local function findTarget()
+	-- getNPC first (bosses + group), fallback to old distance scan
+	local npc = getNPC()
+	if npc and npc.Parent then
+		return npc
+	end
+	return nil
 end
 
 local function isRangedNow()
@@ -759,11 +859,14 @@ local function loop()
 		if target then
 			local part = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
 			if part then
-				local isBoss = (target.Name == "Gyakusatsu") or (target.Parent and target.Parent.Name == "GyakusatsuSpawn")
+				local isBoss = isBossName(target.Name)
+					or (target.Parent and target.Parent.Name == "GyakusatsuSpawn")
 				local dest
 				if isBoss then
-					dest = part.CFrame * CFrame.Angles(math.rad(90), 0, 0) + Vector3.new(0, 8, 0)
+					-- exact z4gs: HRP * Angles(90) + (0, DistanceFromBoss, 0)
+					dest = part.CFrame * CFrame.Angles(math.rad(90), 0, 0) + Vector3.new(0, Farm.DistanceFromBoss, 0)
 				else
+					-- z4gs: HRP.CFrame + lookVector * DistanceFromNpc (Npc is negative)
 					dest = part.CFrame + part.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
 				end
 
@@ -771,13 +874,16 @@ local function loop()
 				if dist > 20 then
 					teleportTo(dest)
 				else
-					-- glue ALWAYS like working.lua (including ranged)
 					pcall(function()
 						local _, myHrp = character()
 						if myHrp then
 							myHrp.CFrame = dest
 						end
 					end)
+					-- z4gs: skills ONLY on bosses
+					if isBoss then
+						pcall(fireBossSkills)
+					end
 					if tick() - Farm.LastAttack >= Farm.FarmDelay then
 						pcall(attackOnce, target)
 					end
@@ -1118,10 +1224,42 @@ local function reputationTick()
 	return false
 end
 
+function Farm.GetQuestText()
+	local folder = pf()
+	local cq = folder and folder:FindFirstChild("CurrentQuest")
+	local complete = cq and cq:FindFirstChild("Complete")
+	if not complete then return "None" end
+	for _, v in ipairs(complete:GetChildren()) do
+		local val = v:IsA("ValueBase") and v.Value or (v:FindFirstChild("Value") and v.Value.Value)
+		local mx = v:FindFirstChild("Max") and v.Max.Value
+		if mx then
+			return string.format("%s: %s/%s", v.Name, tostring(val or "?"), tostring(mx))
+		end
+		return v.Name
+	end
+	return "None"
+end
+
+function Farm.GetStatsText()
+	local folder = pf()
+	local st = folder and folder:FindFirstChild("Stats")
+	local function sv(n)
+		local x = st and st:FindFirstChild(n)
+		return x and x.Value or "0"
+	end
+	return string.format(
+		"Kills %d | Yen %s | RC %s | Quest: %s",
+		Farm.Stats.kills,
+		sv("Yen"),
+		sv("RC"),
+		Farm.GetQuestText()
+	)
+end
+
 function Farm.Status()
 	local st = currentStageInfo()
 	return string.format(
-		"on=%s target=%s kills=%d attacks=%d collects=%d stage=%s ranged=%s key=%s train=%s rep=%s",
+		"on=%s target=%s kills=%d attacks=%d collects=%d stage=%s ranged=%s key=%s train=%s rep=%s\n%s",
 		tostring(Farm.Enabled),
 		Farm.CurrentTarget and Farm.CurrentTarget.Name or "-",
 		Farm.Stats.kills, Farm.Stats.attacks, Farm.Stats.collects,
@@ -1129,7 +1267,8 @@ function Farm.Status()
 		tostring(Farm._rangedOn),
 		Farm.RemoteKey and (#Farm.RemoteKey .. "ch") or "?",
 		tostring(Farm.AutoTrainer),
-		tostring(Farm.ReputationFarm or Farm.ReputationCashout)
+		tostring(Farm.ReputationFarm or Farm.ReputationCashout),
+		Farm.GetStatsText()
 	)
 end
 

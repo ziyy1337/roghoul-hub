@@ -315,18 +315,24 @@ feel:new_slider({
 local farm = window:new_page({ name = "Autofarm" })
 
 local farmMain = farm:new_section({ name = "General", size = "Fill" })
-farmMain:new_toggle({
-	name = "Autofarm Enabled",
-	flag = "farm_enabled",
-	state = false,
-	callback = function(s)
-		if s then Farm.Start() else Farm.Stop() end
+farmMain:new_button({
+	name = "Start Autofarm",
+	flag = "farm_start",
+	callback = function()
+		Farm.Start()
+	end,
+})
+farmMain:new_button({
+	name = "Stop Autofarm",
+	flag = "farm_stop",
+	callback = function()
+		Farm.Stop()
 	end,
 })
 farmMain:new_toggle({
 	name = "Auto Attack",
 	flag = "farm_attack",
-	state = false,
+	state = true,
 	callback = function(s) Farm.AutoAttack = s end,
 })
 farmMain:new_toggle({
@@ -336,27 +342,43 @@ farmMain:new_toggle({
 	callback = function(s) Farm.AutoCollect = s end,
 })
 farmMain:new_toggle({
+	name = "Collect Corpses (on kill)",
+	flag = "farm_corpses",
+	state = true,
+	callback = function(s) Farm.CollectCorpses = s end,
+})
+farmMain:new_toggle({
 	name = "Auto Respawn / Return",
 	flag = "farm_respawn",
 	state = false,
 	callback = function(s) Farm.AutoRespawn = s end,
 })
 farmMain:new_slider({
-	name = "Farm Delay (sec)",
+	name = "Attack Delay",
 	flag = "farm_delay",
-	min = 0,
-	max = 100,
-	default = 20,
+	min = 15,
+	max = 50,
+	default = 10,
 	text = "[value]/10s",
 	callback = function(v) Farm.FarmDelay = v / 10 end,
 })
-farmMain:new_button({
-	name = "Stop Farm",
-	flag = "farm_stop",
-	callback = function()
-		Farm.Stop()
-		library.flags.farm_enabled = false
-	end,
+farmMain:new_slider({
+	name = "Move Speed",
+	flag = "farm_speed",
+	min = 16,
+	max = 100,
+	default = 48,
+	text = "[value]",
+	callback = function(v) Farm.MoveSpeed = v end,
+})
+farmMain:new_slider({
+	name = "Move Tick",
+	flag = "farm_movetick",
+	min = 5,
+	max = 50,
+	default = 15,
+	text = "[value]/100s",
+	callback = function(v) Farm.MoveTick = v / 100 end,
 })
 
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })
@@ -379,12 +401,6 @@ farmTarget:new_toggle({
 	state = false,
 	callback = function(s) Farm.PreferLowestHP = s end,
 })
-farmTarget:new_toggle({
-	name = "Ignore Players",
-	flag = "farm_noplayers",
-	state = true,
-	callback = function(s) Farm.IgnorePlayers = s end,
-})
 farmTarget:new_slider({
 	name = "Max Farm Distance",
 	flag = "farm_dist",
@@ -393,8 +409,15 @@ farmTarget:new_slider({
 	default = 800,
 	callback = function(v) Farm.MaxDistance = v end,
 })
+farmTarget:new_dropdown({
+	name = "Farm Mode",
+	flag = "farm_mode",
+	options = { "NPC Grind", "Boss Only", "Hearts / Events" },
+	default = "NPC Grind",
+	callback = function(v) Farm.FarmMode = v end,
+})
 
-local farmLoadout = farm:new_section({ name = "Loadout", size = 260 })
+local farmLoadout = farm:new_section({ name = "Loadout (auto when set)", size = 260 })
 farmLoadout:new_dropdown({
 	name = "Kagune Stage",
 	flag = "farm_kagune_stage",
@@ -402,65 +425,28 @@ farmLoadout:new_dropdown({
 	default = "None",
 	callback = function(v) Farm.KaguneStage = v end,
 })
-farmLoadout:new_toggle({
-	name = "Auto Equip Kagune",
-	flag = "farm_equip_kagune",
-	state = false,
-	callback = function(s) Farm.AutoEquipKagune = s end,
-})
 farmLoadout:new_dropdown({
-	name = "Quinque",
+	name = "Quinque (slot match)",
 	flag = "farm_quinque",
-	options = { "None", "Kakuja", "Kagune Quinque", "CCG Isshin", "Custom", "C-Katana", "Scorpion 1/56", "IXA" },
+	options = { "None", "C-Katana", "Scorpion 1/56", "IXA", "Narukami", "Custom" },
 	default = "None",
 	callback = function(v) Farm.Quinque = v end,
 })
-farmLoadout:new_toggle({
-	name = "Auto Equip Quinque",
-	flag = "farm_equip_quinque",
-	state = false,
-	callback = function(s) Farm.AutoEquipQuinque = s end,
-})
 farmLoadout:new_dropdown({
-	name = "RC / Form",
-	flag = "farm_rc",
-	options = { "Default", "Low RC", "Mid RC", "High RC" },
-	default = "Default",
-	callback = function(v) Farm.RCForm = v end,
+	name = "Weapon Mode (C form)",
+	flag = "farm_wepmode",
+	options = { "Blade", "Ranged" },
+	default = "Blade",
+	callback = function(v) Farm.WeaponMode = v end,
 })
-
-local farmMisc = farm:new_section({ name = "Extras", size = 260, side = "right" })
-farmMisc:new_toggle({
-	name = "Auto Kagune Toggle",
+farmLoadout:new_toggle({
+	name = "Auto Kagune Toggle (Q)",
 	flag = "farm_kagune_tog",
 	state = false,
 	callback = function(s) Farm.AutoKaguneToggle = s end,
 })
-farmMisc:new_toggle({
-	name = "Auto Quinque Swap",
-	flag = "farm_quinque_swap",
-	state = false,
-	callback = function(s) Farm.AutoQuinqueSwap = s end,
-})
-farmMisc:new_toggle({
-	name = "Auto Heart Pickup",
-	flag = "farm_hearts",
-	state = false,
-	callback = function(s) Farm.AutoHeartPickup = s end,
-})
-farmMisc:new_toggle({
-	name = "Auto Dissect (Gyakusatsu)",
-	flag = "farm_dissect",
-	state = false,
-	callback = function(s) Farm.AutoDissect = s end,
-})
-farmMisc:new_dropdown({
-	name = "Farm Mode",
-	flag = "farm_mode",
-	options = { "NPC Grind", "Boss Only", "Hearts / Events", "RC Farm" },
-	default = "NPC Grind",
-	callback = function(v) Farm.FarmMode = v end,
-})
+
+local farmMisc = farm:new_section({ name = "Extras", size = 260, side = "right" })
 farmMisc:new_button({
 	name = "Apply Loadout Now",
 	flag = "farm_apply",
@@ -469,9 +455,7 @@ farmMisc:new_button({
 farmMisc:new_button({
 	name = "Print Farm Status",
 	flag = "farm_status",
-	callback = function()
-		print("[Autofarm]", Farm.Status())
-	end,
+	callback = function() print("[Autofarm]", Farm.Status()) end,
 })
 
 ----------------------------------------------------------------

@@ -474,15 +474,16 @@ installHooks = function()
 end
 
 local function reinstallMouseHook()
+	-- disabled: game __index hooks crashed the client
 	hookedMouse = false
-	installHooks()
+	-- installHooks()
 end
 
 LocalPlayer.CharacterAdded:Connect(function()
 	task.wait(1)
 	Camera = Workspace.CurrentCamera
 	Aim.Target = nil
-	reinstallMouseHook()
+	-- reinstallMouseHook()
 end)
 
 -- ===================== keybinds =====================

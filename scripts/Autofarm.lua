@@ -1129,7 +1129,7 @@ task.defer(function()
 					if cam then
 						return CFrame.new(part.Position) * (cam.CFrame - cam.CFrame.Position)
 					end
-					return CFrame.lookAt(part.Position, cam and cam.CFrame.Position or part.Position)
+					return CFrame.new(part.Position)
 				end
 			end
 			return old(self, key)

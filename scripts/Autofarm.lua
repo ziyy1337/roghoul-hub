@@ -21,8 +21,26 @@ local Farm = {
 	Noclip = true,
 
 	TeleportSpeed = 150,  -- studs/sec (z4gs style)
-	DistanceFromNpc = 5,  -- standoff (negative in z4gs means in front)
+	-- working.lua stores these already negated: slider * -1
+	DistanceFromNpc = -5,  -- lookVector * DistanceFromNpc
+	DistanceFromBoss = -8, -- Vector3(0, DistanceFromBoss, 0)
 	FarmDelay = 0.05,     -- attack tick
+
+	-- Boss level gates (working.lua array.boss)
+	Boss = {
+		["Gyakusatsu"] = 1250,
+		["Eto Yoshimura"] = 1250,
+		["Koutarou Amon"] = 750,
+		["Nishiki Nishio"] = 250,
+	},
+	BossEnabled = {
+		["Gyakusatsu"] = false,
+		["Eto Yoshimura"] = false,
+		["Koutarou Amon"] = false,
+		["Nishiki Nishio"] = false,
+	},
+	-- Boss skills (only fire on boss targets)
+	Skills = { E = false, R = false, F = false, C = false },
 
 	Group = "Ghoul",
 	PreferNearest = true,
@@ -74,6 +92,13 @@ local KEY_NAME_MAP = {
 	["4"] = "Four", ["5"] = "Five", ["6"] = "Six",
 	One = "One", Two = "Two", Three = "Three",
 	Four = "Four", Five = "Five", Six = "Six",
+}
+
+local SKILL_CD = {
+	E = "Special1CD",
+	R = "Special2CD",
+	F = "Special3CD",
+	C = "SpecialBonusCD",
 }
 
 local function pf()
@@ -449,43 +474,127 @@ local function classifyNPC(model)
 	return "Named"
 end
 
+local function playerLevel()
+	local folder = pf()
+	local stats = folder and folder:FindFirstChild("Stats")
+	local lv = stats and stats:FindFirstChild("Level")
+	return tonumber(lv and lv.Value) or 0
+end
+
+local function isBossName(nm)
+	return Farm.Boss[nm] ~= nil
+end
+
+local function bossPoseFor(part)
+	-- working.lua: CFrame * Angles(90,0,0) + Vector3.new(0, DistanceFromBoss, 0)
+	return part.CFrame * CFrame.Angles(math.rad(90), 0, 0) + Vector3.new(0, Farm.DistanceFromBoss, 0)
+end
+
+local function npcPoseFor(part)
+	-- working.lua: CFrame + lookVector * DistanceFromNpc (stored negative)
+	return part.CFrame + part.CFrame.LookVector * Farm.DistanceFromNpc
+end
+
 local function findTarget()
+	-- working.lua getNPC priority: enabled Gyakusatsu (lowest HP) → any enabled boss → nearest group NPC
 	local _, hrp = character()
 	if not hrp then return nil end
-	local best, bestScore = nil, math.huge
-	local myPos = hrp.Position
-	for _, d in ipairs(Workspace:GetDescendants()) do
-		if d:IsA("Model") and not playerChars[d] then
-			local nm = d.Name
-			if not nm:find("Corpse", 1, true) and not nm:find("Mob", 1, true) then
-				local hum = d:FindFirstChildOfClass("Humanoid")
-				local part = d:FindFirstChild("HumanoidRootPart") or d:FindFirstChild("Head")
-				if hum and part and hum.Health > 0 and hum.MaxHealth < 1e6 then
-					local dist = (part.Position - myPos).Magnitude
-					local group = classifyNPC(d)
-					local match = false
-					if Farm.Group == "Any" then
-						match = true
-					elseif Farm.Group == "Gyakusatsu" then
-						match = group == "Gyakusatsu" or nm == "Gyakusatsu" or (part.Parent and part.Parent.Name == "GyakusatsuSpawn")
-					elseif Farm.Group == group then
-						match = true
+	local spawns = Workspace:FindFirstChild("NPCSpawns")
+	if not spawns then return nil end
+	local level = playerLevel()
+
+	-- 1) Gyakusatsu special (lowest HP among spawn)
+	if Farm.BossEnabled["Gyakusatsu"] and level > (Farm.Boss["Gyakusatsu"] or 9999) then
+		local gspawn = spawns:FindFirstChild("GyakusatsuSpawn")
+		if gspawn then
+			local lowestHP, lowestModel = math.huge, nil
+			for _, v in ipairs(gspawn:GetChildren()) do
+				if v.Name ~= "Mob" and v:FindFirstChildOfClass("Humanoid") then
+					local h = v.Humanoid.Health
+					if h > 0 and h < lowestHP then
+						lowestHP = h
+						lowestModel = v
 					end
-					if match then
-						local score = dist
-						if Farm.PreferLowestHP and not Farm.PreferNearest then
-							score = hum.Health * 0.01 + dist
-						end
-						if score < bestScore then
-							bestScore = score
-							best = d
-						end
+				end
+			end
+			if lowestModel then
+				return lowestModel
+			end
+			local fallback = gspawn:FindFirstChild("Gyakusatsu")
+			if fallback and fallback:FindFirstChild("Humanoid") and fallback.Humanoid.Health > 0 then
+				return fallback
+			end
+		end
+	end
+
+	local nearest, nearestDist = nil, math.huge
+	local myPos = hrp.Position
+	for _, folder in ipairs(spawns:GetChildren()) do
+		-- first Model child in folder (working.lua FindFirstChildOfClass Model)
+		local npc = folder:FindFirstChildOfClass("Model")
+		if npc and npc:FindFirstChild("Head") and not npc:FindFirstChild("AC") then
+			local hum = npc:FindFirstChildOfClass("Humanoid")
+			local part = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head")
+			if hum and part and hum.Health > 0 then
+				local nm = npc.Name
+				-- enabled boss with level gate → return immediately
+				if Farm.BossEnabled[nm] and level >= (Farm.Boss[nm] or 9999) then
+					return npc
+				end
+				-- group match (working.lua array.targ == parent folder name)
+				local groupMatch = false
+				if Farm.Group == "Any" then
+					groupMatch = true
+				elseif Farm.Group == "Gyakusatsu" then
+					groupMatch = nm == "Gyakusatsu" or folder.Name:find("Gyakusatsu", 1, true) ~= nil
+				else
+					groupMatch = (folder.Name == Farm.Group)
+						or (Farm.Group == "Ghoul" and folder.Name:find("Ghoul", 1, true) ~= nil)
+						or (Farm.Group == "CCG" and folder.Name:find("CCG", 1, true) ~= nil)
+						or (Farm.Group == "Human" and folder.Name:find("Human", 1, true) ~= nil)
+						or (Farm.Group == "Aggro" and folder.Name:find("Aggro", 1, true) ~= nil)
+						or (Farm.Group == "Boss" and isBossName(nm))
+				end
+				if groupMatch then
+					local dist = (part.Position - myPos).Magnitude
+					if dist < nearestDist then
+						nearestDist = dist
+						nearest = npc
 					end
 				end
 			end
 		end
 	end
-	return best
+	return nearest
+end
+
+local function targetIsBoss(npc)
+	if not npc then return false end
+	if npc.Parent and npc.Parent.Name == "GyakusatsuSpawn" then return true end
+	if Farm.BossEnabled[npc.Name] then return true end
+	-- also treat as boss for pose if named in Boss map (even if toggle off, GyakusatsuSpawn pose still applies)
+	return npc.Name == "Gyakusatsu"
+end
+
+local function fireBossSkills(target)
+	if not target then return end
+	if not canAct() then return end
+	for key, enabled in pairs(Farm.Skills) do
+		if enabled then
+			local cdName = SKILL_CD[key]
+			if not cdName then continue end
+			-- working.lua: skill fires when Value ~= "DownTime"
+			local folder = pf()
+			local cd = folder and folder:FindFirstChild(cdName)
+			local val = cd and tostring(cd.Value)
+			if (not cd) or val ~= "DownTime" then
+				local part = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
+				if part then
+					pressKey(key, MH())
+				end
+			end
+		end
+	end
 end
 
 local function isRangedNow()
@@ -605,18 +714,16 @@ local function attackOnce(target)
 	local c, myHrp, hum = character()
 	if not myHrp then return false end
 
-	-- glue ALWAYS like working.lua (ranged too) so the camera/mouse sit on the NPC
-	local dest
-	if isRangedNow() then
-		dest = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
-	else
-		dest = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
-	end
+	-- glue like working.lua: boss pose vs npc pose
+	local boss = targetIsBoss(target)
+	local dest = boss and bossPoseFor(hrpPart) or npcPoseFor(hrpPart)
 	myHrp.CFrame = dest
-	-- facing the target helps camera ray + Mouse.Hit
-	pcall(function()
-		myHrp.CFrame = CFrame.lookAt(dest.Position, hrpPart.Position)
-	end)
+	if not boss then
+		-- facing the target helps camera ray + Mouse.Hit
+		pcall(function()
+			myHrp.CFrame = CFrame.lookAt(dest.Position, hrpPart.Position)
+		end)
+	end
 
 	-- working.lua: send real Mouse.Hit after we are glued on target
 	local hit = MH()
@@ -628,6 +735,12 @@ local function attackOnce(target)
 	Farm.LastAttack = tick()
 	Farm.Stats.attacks += 1
 
+	-- boss skills: same as working.lua loop (only when target is boss)
+	if boss then
+		pcall(fireBossSkills, target)
+	end
+
+	-- optional attack toggles (still respect CD; not required on bosses)
 	local function trySpecial(key, cdName, minGap)
 		if readyCD(cdName) and tick() - Farm.LastSpecial > minGap then
 			pressKey(key, hit)
@@ -739,10 +852,20 @@ local function loop()
 			local tHum = target:FindFirstChildOfClass("Humanoid")
 			if not tHum or tHum.Health <= 0 or not target.Parent then
 				Farm.Stats.kills += 1
-				if Farm.CollectCorpses and not target.Name:find("Gyakusatsu", 1, true) then
+				-- working.lua: Gyakusatsu forces suicide to respawn cycle
+				if target.Name == "Gyakusatsu" then
+					pcall(function()
+						local _, _, myHum = character()
+						if myHum then myHum.Health = 0 end
+					end)
+				end
+				-- working.lua: skip corpse for Gyakusatsu + Eto Yoshimura
+				local skipCorpse = (target.Name == "Gyakusatsu")
+					or (target.Name == "Eto Yoshimura")
+					or target.Name:find("Gyakusatsu", 1, true) ~= nil
+				if Farm.CollectCorpses and not skipCorpse then
 					Farm.CorpseNpc = target
 					Farm.CorpseName = target.Name
-					-- collect immediately like working.lua
 					pcall(collectCorpse, target)
 					Farm.CorpseNpc = nil
 					Farm.CorpseName = nil
@@ -759,19 +882,14 @@ local function loop()
 		if target then
 			local part = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
 			if part then
-				local isBoss = (target.Name == "Gyakusatsu") or (target.Parent and target.Parent.Name == "GyakusatsuSpawn")
-				local dest
-				if isBoss then
-					dest = part.CFrame * CFrame.Angles(math.rad(90), 0, 0) + Vector3.new(0, 8, 0)
-				else
-					dest = part.CFrame + part.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
-				end
+				local isBoss = targetIsBoss(target)
+				local dest = isBoss and bossPoseFor(part) or npcPoseFor(part)
 
 				local dist = (part.Position - hrp.Position).Magnitude
 				if dist > 20 then
 					teleportTo(dest)
 				else
-					-- glue ALWAYS like working.lua (including ranged)
+					-- glue like working.lua (boss uses Angle 90 + DistanceFromBoss)
 					pcall(function()
 						local _, myHrp = character()
 						if myHrp then
@@ -1120,8 +1238,12 @@ end
 
 function Farm.Status()
 	local st = currentStageInfo()
+	local bossOn = {}
+	for name, on in pairs(Farm.BossEnabled) do
+		if on then bossOn[#bossOn + 1] = name end
+	end
 	return string.format(
-		"on=%s target=%s kills=%d attacks=%d collects=%d stage=%s ranged=%s key=%s train=%s rep=%s",
+		"on=%s target=%s kills=%d attacks=%d collects=%d stage=%s ranged=%s key=%s train=%s rep=%s distNpc=%s distBoss=%s bosses=%s",
 		tostring(Farm.Enabled),
 		Farm.CurrentTarget and Farm.CurrentTarget.Name or "-",
 		Farm.Stats.kills, Farm.Stats.attacks, Farm.Stats.collects,
@@ -1129,7 +1251,10 @@ function Farm.Status()
 		tostring(Farm._rangedOn),
 		Farm.RemoteKey and (#Farm.RemoteKey .. "ch") or "?",
 		tostring(Farm.AutoTrainer),
-		tostring(Farm.ReputationFarm or Farm.ReputationCashout)
+		tostring(Farm.ReputationFarm or Farm.ReputationCashout),
+		tostring(Farm.DistanceFromNpc),
+		tostring(Farm.DistanceFromBoss),
+		#bossOn > 0 and table.concat(bossOn, ",") or "none"
 	)
 end
 

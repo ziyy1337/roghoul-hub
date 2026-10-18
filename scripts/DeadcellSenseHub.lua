@@ -377,7 +377,10 @@ farmMain:new_slider({
 	max = 200,
 	default = 80,
 	text = "[value]",
-	callback = function(v) Farm.MoveSpeed = v end,
+	callback = function(v)
+		Farm.MoveSpeed = v
+		Farm.TeleportSpeed = v
+	end,
 })
 
 -- Attacks (Mouse1 always active) — matches user request
@@ -481,6 +484,57 @@ farmTrain:new_button({
 		print("AutoTrainer=", Farm.AutoTrainer, "RepFarm=", Farm.ReputationFarm, "Cashout=", Farm.ReputationCashout)
 	end,
 })
+
+local farmDist = farm:new_section({ name = "Distance / Bosses", size = 260 })
+farmDist:new_slider({
+	name = "Distance from NPC",
+	flag = "farm_dist_npc",
+	min = 0,
+	max = 8,
+	default = 5,
+	text = "[value]",
+	callback = function(v) Farm.DistanceFromNpc = v * -1 end,
+})
+farmDist:new_slider({
+	name = "Distance from Bosses",
+	flag = "farm_dist_boss",
+	min = 0,
+	max = 15,
+	default = 8,
+	text = "[value]",
+	callback = function(v) Farm.DistanceFromBoss = v * -1 end,
+})
+farmDist:new_slider({
+	name = "TP Speed",
+	flag = "farm_tp_speed",
+	min = 30,
+	max = 250,
+	default = 150,
+	text = "[value]",
+	callback = function(v) Farm.TeleportSpeed = v end,
+})
+for bossName, minLevel in pairs({
+	["Gyakusatsu"] = 1250,
+	["Eto Yoshimura"] = 1250,
+	["Koutarou Amon"] = 750,
+	["Nishiki Nishio"] = 250,
+}) do
+	farmDist:new_toggle({
+		name = bossName .. " (lvl " .. minLevel .. "+)",
+		flag = "farm_boss_" .. bossName,
+		state = false,
+		callback = function(s) Farm.BossEnabled[bossName] = s end,
+	})
+end
+farmDist:new_seperator({ name = "Boss Skills (E/R/F/C)" })
+for _, skillKey in ipairs({ "E", "R", "F", "C" }) do
+	farmDist:new_toggle({
+		name = "Skill " .. skillKey .. " (bosses)",
+		flag = "farm_skill_" .. skillKey,
+		state = false,
+		callback = function(s) Farm.Skills[skillKey] = s end,
+	})
+end
 
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })
 farmTarget:new_dropdown({

@@ -438,10 +438,21 @@ installHooks = function()
 		return false
 	end
 
-	-- Method A: game metatable __index (covers mouse accessed via game workspace paths)
-	if not hookedGame and type(hookmetamethod) == "function" then
+	-- Method A: game metatable __index
+	if not hookedGame and type(hookmetamethod) == "function" and getrawmetatable then
 		local ok = pcall(function()
-			oldGameIndex = hookmetamethod(game, "__index", wrap(function(self, key)
+			local mt = getrawmetatable(game)
+			local orig = mt and mt.__index
+			oldGameIndex = function(self, key)
+				if type(orig) == "function" then return orig(self, key) end
+				if type(orig) == "table" then
+					local v = orig[key]
+					if type(v) == "function" then return v(self) end
+					return v
+				end
+				return nil
+			end
+			hookmetamethod(game, "__index", wrap(function(self, key)
 				if not safeCheckcaller() then
 					local spoof, hit = buildSpoof(self, key)
 					if hit then return spoof end
@@ -452,12 +463,23 @@ installHooks = function()
 		hookedGame = ok
 	end
 
-	-- Method B: PlayerMouse's own metatable (most reliable for m.Hit)
+	-- Method B: PlayerMouse metatable
 	if not hookedMouse then
 		local m = getMouse()
-		if m and type(hookmetamethod) == "function" then
+		if m and type(hookmetamethod) == "function" and getrawmetatable then
 			local ok = pcall(function()
-				oldMouseIndex = hookmetamethod(m, "__index", wrap(function(self, key)
+				local mt = getrawmetatable(m)
+				local orig = mt and mt.__index
+				oldMouseIndex = function(self, key)
+					if type(orig) == "function" then return orig(self, key) end
+					if type(orig) == "table" then
+						local v = orig[key]
+						if type(v) == "function" then return v(self) end
+						return v
+					end
+					return nil
+				end
+				hookmetamethod(m, "__index", wrap(function(self, key)
 					if not safeCheckcaller() then
 						local spoof, hit = buildSpoof(self, key)
 						if hit then return spoof end
@@ -469,7 +491,6 @@ installHooks = function()
 		end
 	end
 
-	-- Method C: namecall is useless for property index, but ensure mouse exists after respawn
 	return hookedGame or hookedMouse
 end
 

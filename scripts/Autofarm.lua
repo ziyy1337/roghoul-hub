@@ -898,9 +898,18 @@ end
 local hitSpoofInstalled = false
 local function installHitSpoof()
 	if hitSpoofInstalled or not hookmetamethod then return end
+	if not getrawmetatable then
+		warn("[Autofarm] no getrawmetatable; skip hit spoof")
+		return
+	end
 	hitSpoofInstalled = true
+
+	-- capture original BEFORE hook (hookmetamethod return can be nil here)
+	local mt = getrawmetatable(game)
+	local orig = mt and mt.__index
+
 	local ok = pcall(function()
-		local old = hookmetamethod(game, "__index", newcclosure(function(self, key)
+		hookmetamethod(game, "__index", newcclosure(function(self, key)
 			if not checkcaller() and key == "Hit" and Farm.Enabled then
 				local target = Farm.CurrentTarget
 				local part = target and (target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart"))
@@ -912,7 +921,18 @@ local function installHitSpoof()
 					return CFrame.new(part.Position)
 				end
 			end
-			return old(self, key)
+			if type(orig) == "function" then
+				return orig(self, key)
+			end
+			-- table __index fallback
+			if type(orig) == "table" then
+				local v = orig[key]
+				if type(v) == "function" then
+					return v(self)
+				end
+				return v
+			end
+			return nil
 		end))
 	end)
 	if ok then print("[Autofarm] Mouse.Hit spoof installed") else warn("[Autofarm] Mouse.Hit spoof failed") end

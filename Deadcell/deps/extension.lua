@@ -358,7 +358,9 @@ local drawing = {} do
                     scrollpositions[self] = 0
                     scrollobjs[self] = true
 
-                    self.ClipsDescendants = true
+                    -- do NOT enable ClipsDescendants here: the Parent handler would hide
+                    -- overflow children immediately (sections taller than the column).
+                    -- Clipping only kicks in on the first real wheel scroll below.
 
                     local function scroll(amount)
                         local totalclippedobjs, currentclippedobj, docontinue = 0, nil, false
@@ -402,15 +404,13 @@ local drawing = {} do
 
                                 local diff = (Vector2.new(0, mtobjs[self].Position.Y) - Vector2.new(0, (closestobj.Position.Y + poschange + objpaddings[self]))).magnitude
 
-                                if custompropertygets[mtobjs[self]]("ClipsDescendants") then
-                                    for i, object in next, objchildren[self] do
-                                        if not istouching(object.Position + Vector2.new(0, poschange - diff + objpaddings[self]), object.Size, mtobjs[self].Position, mtobjs[self].Size) then
-                                            object.Visible = false
-                                            childrenvisupdates[objmts[object]](objmts[object], false)
-                                        else
-                                            object.Visible = true
-                                            childrenvisupdates[objmts[object]](objmts[object], true)
-                                        end
+                                for i, object in next, objchildren[self] do
+                                    if not istouching(object.Position + Vector2.new(0, poschange - diff + objpaddings[self]), object.Size, mtobjs[self].Position, mtobjs[self].Size) then
+                                        object.Visible = false
+                                        childrenvisupdates[objmts[object]](objmts[object], false)
+                                    else
+                                        object.Visible = true
+                                        childrenvisupdates[objmts[object]](objmts[object], true)
                                     end
                                 end
 
@@ -423,15 +423,13 @@ local drawing = {} do
                             else
                                 local poschange = currentclippedobj.Size.Y + objpaddings[self]
 
-                                if custompropertygets[mtobjs[self]]("ClipsDescendants") then
-                                    for i, object in next, objchildren[self] do
-                                        if not istouching(object.Position + Vector2.new(0, poschange), object.Size, mtobjs[self].Position, mtobjs[self].Size) then
-                                            object.Visible = false
-                                            childrenvisupdates[objmts[object]](objmts[object], false)
-                                        else
-                                            object.Visible = true
-                                            childrenvisupdates[objmts[object]](objmts[object], true)
-                                        end
+                                for i, object in next, objchildren[self] do
+                                    if not istouching(object.Position + Vector2.new(0, poschange), object.Size, mtobjs[self].Position, mtobjs[self].Size) then
+                                        object.Visible = false
+                                        childrenvisupdates[objmts[object]](objmts[object], false)
+                                    else
+                                        object.Visible = true
+                                        childrenvisupdates[objmts[object]](objmts[object], true)
                                     end
                                 end
 

@@ -550,6 +550,10 @@ local function collectCorpse(npc)
 
 	hrp.CFrame = clickpart.CFrame * CFrame.new(0, 1.7, 0)
 
+	-- WalkSpeed is 0 while farming — restore briefly so MoveTo works
+	local prevWs = hum.WalkSpeed
+	pcall(function() hum.WalkSpeed = Farm._baseWalkSpeed or 48 end)
+
 	local unnamed
 	pcall(function()
 		unnamed = clickpart:WaitForChild("", 1)
@@ -581,6 +585,15 @@ local function collectCorpse(npc)
 		Farm.Stats.collects += 1
 	until not model.Parent or not model:FindFirstChild("ClickPart") or not Farm.Enabled
 		or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") and LocalPlayer.Character.Humanoid.Health <= 0)
+
+	-- re-lock
+	pcall(function()
+		local ch = LocalPlayer.Character
+		local h = ch and ch:FindFirstChildOfClass("Humanoid")
+		if h and Farm.Enabled then
+			h.WalkSpeed = 0
+		end
+	end)
 
 	return true
 end

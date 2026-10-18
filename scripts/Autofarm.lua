@@ -500,71 +500,72 @@ local function isRangedNow()
 end
 
 local function collectCorpse(npc)
-	-- fast search — give up in ~1s so farm doesn't stall on a missing corpse
-	local timer = tick()
+	-- Corpse is a CHILD of the NPC:  NPC / "NPCName Corpse" / ClickPart
+	-- ClickPart has an empty-name ClickDetector child (working.lua clickpart[""])
 	if not npc then return false end
-	local npcName = type(npc) == "table" and npc.Name or npc.Name
+	local npcName = type(npc) == "table" and tostring(npc.Name) or npc.Name
 
-	local function findCorpse()
-		local model
-		-- sibling/child "Name Corpse"
-		if type(npc) == "table" and npc.WaitForChild == nil then
-			model = workspace:FindFirstChild(npcName .. " Corpse")
-		else
-			pcall(function() model = npc:FindFirstChild(npcName .. " Corpse") end)
-			if (not model or not model.Parent) and type(npc) == "table" == false and npc.Parent then
-				model = npc.Parent:FindFirstChild(npcName .. " Corpse")
-			end
-			model = model or workspace:FindFirstChild(npcName .. " Corpse")
+	local model = nil
+	-- 1) child of live/dead npc
+	if type(npc) == "table" and npc.WaitForChild == nil then
+		model = workspace:FindFirstChild(npcName .. " Corpse")
+	else
+		model = npc:FindFirstChild(npcName .. " Corpse")
+		if (not model) and npc.Parent then
+			model = npc.Parent:FindFirstChild(npcName .. " Corpse")
 		end
-		if not model then
-			for _, d in ipairs(Workspace:GetDescendants()) do
-				if d.Name == npcName .. " Corpse" then
-					model = d
-					break
-				end
-			end
+		-- 2) corpse nested under spawn mesh
+		if not model and npc.Parent and npc.Parent.Parent then
+			model = npc.Parent.Parent:FindFirstChild(npcName .. " Corpse")
 		end
-		return model
+		-- 3) npc itself may BE corpse holder after death
+		if not model and npc:FindFirstChild("ClickPart") then
+			model = npc
+		end
 	end
 
-	local model = findCorpse()
-	if not model then
-		-- poll up to 0.8s only
-		while tick() - timer < 0.8 and Farm.Enabled do
-			task.wait(0.1)
-			model = findCorpse()
-			if model then break end
+	-- 4) slow poll (corpse can appear ~0.3s after death)
+	local t0 = tick()
+	while not model and tick() - t0 < 1.2 and Farm.Enabled do
+		task.wait(0.08)
+		model = workspace:FindFirstChild(npcName .. " Corpse")
+		if not model and type(npc) ~= "table" and npc.Parent then
+			model = npc.Parent:FindFirstChild(npcName .. " Corpse")
 		end
 	end
 	if not model then return false end
 
 	local clickpart = model:FindFirstChild("ClickPart")
 	if not clickpart then
-		pcall(function() clickpart = model:WaitForChild("ClickPart", 0.5) end)
+		-- ClickPart might be nested
+		for _, d in ipairs(model:GetDescendants()) do
+			if d.Name == "ClickPart" then
+				clickpart = d
+				break
+			end
+		end
 	end
 	if not clickpart then return false end
 
 	local c, hrp, hum = character()
 	if not hrp or not hum then return false end
 
-	-- one snap to corpse, short click loop (max 2.5s)
 	hrp.CFrame = clickpart.CFrame * CFrame.new(0, 1.7, 0)
-	local prevWs = hum.WalkSpeed
 	pcall(function() hum.WalkSpeed = Farm._baseWalkSpeed or 48 end)
 
 	local unnamed = clickpart:FindFirstChild("")
 	pcall(function()
-		if not unnamed then unnamed = clickpart:WaitForChild("", 0.4) end
+		if not unnamed then unnamed = clickpart:WaitForChild("", 0.35) end
 	end)
 
-	local endT = tick() + 2.5
+	local endT = tick() + 3
 	while tick() < endT and Farm.Enabled do
-		if not model.Parent or not model:FindFirstChild("ClickPart") then break end
+		if not model or not model.Parent then break end
+		if not model:FindFirstChild("ClickPart") then break end
 		local ch = LocalPlayer.Character
 		if not ch or not ch:FindFirstChild("Humanoid") or ch.Humanoid.Health <= 0 then break end
 		pcall(function() ch.Humanoid:MoveTo(clickpart.Position) end)
-		task.wait(0.12)
+		task.wait(0.1)
 		if unnamed then
 			pcall(function() fireclickdetector(unnamed, 1) end)
 		else
@@ -604,16 +605,24 @@ local function attackOnce(target)
 	local c, myHrp, hum = character()
 	if not myHrp then return false end
 
-	local hit = attackHitCFrame(hrpPart.Position)
-
-	-- glue character (working.lua); ranged keeps standoff
+	-- glue ALWAYS like working.lua (ranged too) so the camera/mouse sit on the NPC
 	local dest
 	if isRangedNow() then
-		dest = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(math.max(Farm.DistanceFromNpc, 12)))
+		dest = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
 	else
 		dest = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
 	end
 	myHrp.CFrame = dest
+	-- facing the target helps camera ray + Mouse.Hit
+	pcall(function()
+		myHrp.CFrame = CFrame.lookAt(dest.Position, hrpPart.Position)
+	end)
+
+	-- working.lua: send real Mouse.Hit after we are glued on target
+	local hit = MH()
+	if not hit or hit.Position.Magnitude < 1 then
+		hit = attackHitCFrame(hrpPart.Position)
+	end
 
 	pressKey("Mouse1", hit)
 	Farm.LastAttack = tick()
@@ -733,6 +742,10 @@ local function loop()
 				if Farm.CollectCorpses and not target.Name:find("Gyakusatsu", 1, true) then
 					Farm.CorpseNpc = target
 					Farm.CorpseName = target.Name
+					-- collect immediately like working.lua
+					pcall(collectCorpse, target)
+					Farm.CorpseNpc = nil
+					Farm.CorpseName = nil
 				end
 				Farm.CurrentTarget = nil
 				target = nil
@@ -758,10 +771,10 @@ local function loop()
 				if dist > 20 then
 					teleportTo(dest)
 				else
-					-- hard glue every frame (stops WASD from winning)
+					-- glue ALWAYS like working.lua (including ranged)
 					pcall(function()
 						local _, myHrp = character()
-						if myHrp and not isRangedNow() then
+						if myHrp then
 							myHrp.CFrame = dest
 						end
 					end)
@@ -1099,6 +1112,33 @@ end
 task.defer(function()
 	Farm.FetchStages()
 	getAuthKey()
+end)
+
+
+-- Spoof Mouse.Hit to current target while farming (ranged uses camera ray / MH())
+task.defer(function()
+	if not hookmetamethod then return end
+	local ok = pcall(function()
+		local mouse = LocalPlayer:GetMouse()
+		local old = hookmetamethod(game, "__index", newcclosure(function(self, key)
+			if not checkcaller() and key == "Hit" and Farm.Enabled then
+				local target = Farm.CurrentTarget
+				local part = target and (target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart"))
+				if part and typeof(self) == "Instance" and self.ClassName == "PlayerMouse" then
+					local cam = Workspace.CurrentCamera
+					if cam then
+						return CFrame.new(part.Position) * (cam.CFrame - cam.CFrame.Position)
+					end
+					return CFrame.lookAt(part.Position, cam and cam.CFrame.Position or part.Position)
+				end
+			end
+			return old(self, key)
+		end))
+		print("[Autofarm] Mouse.Hit spoof installed")
+	end)
+	if not ok then
+		warn("[Autofarm] Mouse.Hit spoof failed")
+	end
 end)
 
 return Farm

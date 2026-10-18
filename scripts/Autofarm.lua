@@ -28,9 +28,9 @@ local Farm = {
 	PreferNearest = true,
 	PreferLowestHP = false,
 
-	Quinque = "IXA",
+	Quinque = "IXA", -- unused in UI; Stage drives equip
 	Stage = "One",         -- "One".."Six" (KeyEvent stage names)
-	WeaponMode = "Auto",   -- Auto | Blade | Ranged
+	WeaponMode = "Auto",   -- kept for API; UI uses RangeMode only
 
 	-- Attacks (Mouse1 always active)
 	AttackE = false,
@@ -42,19 +42,27 @@ local Farm = {
 	AutoArataRefill = false,
 	AutoMask = false,
 
+	-- Trainer / Reputation (working.lua)
+	AutoTrainer = false,
+	ReputationFarm = false,
+	ReputationCashout = false,
+
 	-- runtime
 	CurrentTarget = nil,
-	CorpseDrop = nil,
+	CorpseNpc = nil,
 	LastAttack = 0,
 	LastSpecial = 0,
 	LastArata = 0,
 	LastMask = 0,
 	LastRange = 0,
 	LastEquip = 0,
+	LastCashout = 0,
 	Stats = { attacks = 0, collects = 0, kills = 0 },
 	AvailableStages = {},
 	RemoteKey = nil,
+	TrainersList = nil,
 	_task = nil,
+	_trainTask = nil,
 	_noclipConn = nil,
 }
 
@@ -375,28 +383,27 @@ local function ensureArata()
 		Farm.LastArata = tick()
 		return
 	end
-	-- only open when OFF (tapping while on closes it)
-	pressKey("0")
+	-- KeyCode.Zero -> KeyEvent name "Zero" (not "0")
+	pressKey("Zero")
 	Farm.LastArata = tick()
 end
 
 -- death re-arm
 local function onDeathReset()
 	Farm.CurrentTarget = nil
-	Farm.CorpseDrop = nil
+	Farm.CorpseNpc = nil
 	Farm._rangedOn = false
 	Farm.LastEquip = 0
 	Farm.LastMask = 0
 	Farm.LastArata = 0
 	Farm.LastRange = 0
-	-- after respawn, re-equip / re-mask / re-open arata
 	task.delay(1.5, function()
 		if Farm.AutoMask then
 			pressKey("M")
 			Farm.LastMask = tick()
 		end
 		if Farm.AutoArata then
-			pressKey("0")
+			pressKey("Zero")
 			Farm.LastArata = tick()
 		end
 	end)
@@ -475,37 +482,81 @@ local function findTarget()
 end
 
 local function collectCorpse(npc)
-	local model = npc and Workspace:FindFirstChild(npc.Name .. " Corpse")
-		or (function()
-			for _, d in ipairs(Workspace:GetDescendants()) do
-				if d:IsA("Model") and d.Name:find(npc.Name, 1, true) and d.Name:find("Corpse", 1, true) then
-					return d
-				end
-			end
-		end)()
-	if not model then return false end
-	local click = model:FindFirstChild("ClickPart") or model:FindFirstChildWhichIsA("BasePart", true)
-	if not click then return false end
-	local _, hrp = character()
-	if not hrp then return false end
-	teleportTo(click.CFrame * CFrame.new(0, 1.7, 0))
+	-- exact working.lua collect pattern
+	if not npc then return end
 	local timer = tick()
-	while tick() - timer < 4 and Farm.Enabled do
-		if not model.Parent then break end
-		pcall(function()
-			local cd = click:FindFirstChildOfClass("ClickDetector")
-			if cd then
-				cd:MouseClick()
-			end
-			-- unnamed child used in z4gs
-			local unnamed = click:FindFirstChild("")
-			if unnamed and unnamed:IsA("ClickDetector") then
-				fireclickdetector(unnamed, 1)
-			end
-		end)
-		Farm.Stats.collects += 1
-		task.wait(0.15)
+
+	-- corpse is often a sibling: "NPCName Corpse"
+	local model = nil
+	pcall(function()
+		model = npc:WaitForChild(npc.Name .. " Corpse", 1.5)
+	end)
+	if not model or not model.Parent then
+		model = workspace:FindFirstChild(npc.Name .. " Corpse")
 	end
+	if not model then
+		for _, d in ipairs(workspace:GetDescendants()) do
+			if d:IsA("Model") and d.Name == npc.Name .. " Corpse" then
+				model = d
+				break
+			end
+		end
+	end
+	if not model then return false end
+
+	local clickpart = model:FindFirstChild("ClickPart")
+	if not clickpart then
+		pcall(function()
+			clickpart = model:WaitForChild("ClickPart", 1.5)
+		end)
+	end
+	if not clickpart then return false end
+
+	local c, hrp, hum = character()
+	if not hrp or not hum then return false end
+
+	-- sit on the click part like working.lua
+	hrp.CFrame = clickpart.CFrame * CFrame.new(0, 1.7, 0)
+
+	-- working.lua uses unnamed child ClickDetector: clickpart[""]
+	local unnamed
+	pcall(function()
+		unnamed = clickpart:WaitForChild("", 1)
+	end)
+	if not unnamed then
+		unnamed = clickpart:FindFirstChild("")
+	end
+
+	repeat
+		if tick() - timer > 4 then
+			break
+		end
+		local ch = LocalPlayer.Character
+		if not ch or not ch:FindFirstChild("Humanoid") or ch.Humanoid.Health <= 0 then
+			break
+		end
+		if not model.Parent then
+			break
+		end
+		pcall(function()
+			ch.Humanoid:MoveTo(clickpart.Position)
+		end)
+		task.wait()
+		if unnamed then
+			pcall(function()
+				fireclickdetector(unnamed, 1)
+			end)
+		else
+			pcall(function()
+				local cd = clickpart:FindFirstChildOfClass("ClickDetector")
+				if cd then
+					cd:MouseClick()
+				end
+			end)
+		end
+		Farm.Stats.collects += 1
+	until not model.Parent or not model:FindFirstChild("ClickPart") or not Farm.Enabled
+
 	return true
 end
 
@@ -551,7 +602,9 @@ end
 local function stop()
 	Farm.Enabled = false
 	Farm.CurrentTarget = nil
+	Farm.CorpseNpc = nil
 	setNoclip(false)
+	pcall(Farm.StopTrain)
 	if Farm._task then
 		task.cancel(Farm._task)
 		Farm._task = nil
@@ -578,25 +631,22 @@ local function loop()
 		pcall(ensureArata)
 		pcall(ensureRangeAfterEquip)
 
-		-- corpse
-		if Farm.CorpseDrop and tick() - Farm.CorpseDrop.t < 12 then
-			local target = Farm.CorpseDrop.model
-			if target and target.Parent then
-				local click = target:FindFirstChild("ClickPart") or target:FindFirstChildWhichIsA("BasePart", true)
-				if click then
-					if (click.Position - hrp.Position).Magnitude > 5 then
-						teleportTo(click.CFrame * CFrame.new(0, 1.7, 0))
-					else
-						collectCorpse(Farm.CorpseDrop)
-						if tick() - Farm.CorpseDrop.t > 3 then
-							Farm.CorpseDrop = nil
-						end
-					end
-					task.wait(0.1)
-					continue
-				end
-			else
-				Farm.CorpseDrop = nil
+		-- corpse — working.lua collect on the dead NPC
+		if Farm.CorpseNpc and Farm.CollectCorpses then
+			local npc = Farm.CorpseNpc
+			Farm.CorpseNpc = nil
+			if npc and npc.Parent then
+				pcall(collectCorpse, npc)
+			end
+			task.wait(0.05)
+			continue
+		end
+
+		-- reputation / trainer side jobs
+		if Farm.ReputationFarm or Farm.ReputationCashout then
+			if pcall(Farm.TryReputationTick) then
+				task.wait(0.5)
+				continue
 			end
 		end
 
@@ -605,8 +655,8 @@ local function loop()
 			local tHum = target:FindFirstChildOfClass("Humanoid")
 			if not tHum or tHum.Health <= 0 or not target.Parent then
 				Farm.Stats.kills += 1
-				if Farm.CollectCorpses and target.Name ~= "Gyakusatsu" then
-					Farm.CorpseDrop = { model = target, name = target.Name, t = tick() }
+				if Farm.CollectCorpses and not target.Name:find("Gyakusatsu", 1, true) then
+					Farm.CorpseNpc = target
 				end
 				Farm.CurrentTarget = nil
 				target = nil
@@ -667,6 +717,9 @@ function Farm.Start()
 			Farm.Enabled = false
 		end
 	end)
+	if Farm.AutoTrainer then
+		pcall(Farm.TrainLoop)
+	end
 	print("[Autofarm] started | group=" .. tostring(Farm.Group)
 		.. " | stage=" .. tostring(Farm.Stage) .. "/" .. stageWord()
 		.. " | range=" .. tostring(Farm.RangeMode)
@@ -707,7 +760,7 @@ function Farm.ApplyLoadoutNow()
 		Farm.LastMask = tick()
 	end
 	if Farm.AutoArata then
-		pressKey("0")
+		pressKey("Zero")
 		Farm.LastArata = tick()
 	end
 	print("[Autofarm] loadout", Farm.Status())
@@ -720,21 +773,199 @@ function Farm.ForceMask()
 end
 
 function Farm.OpenArata()
-	pressKey("0")
+	pressKey("Zero")
 	Farm.LastArata = tick()
-	print("[Autofarm] arata (0)")
+	print("[Autofarm] arata (Zero)")
+end
+
+function Farm.KaguneToggleNow()
+	pressKey("Q")
+	print("[Autofarm] kagune toggle (Q)")
+end
+
+-- ===================== Trainer (working.lua) =====================
+local function getRemotes()
+	return game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+end
+
+local function grabTrainersList()
+	if Farm.TrainersList then return Farm.TrainersList end
+	local team = pf() and pf().Customization and pf().Customization.Team.Value or "CCG"
+	local want = team == "CCG" and "(S1) Kureo Mado" or "(S1) Ken Kaneki"
+	pcall(function()
+		if not getgc then return end
+		for _, v in pairs(getgc(true)) do
+			if type(v) == "table" and table.find(v, want) then
+				Farm.TrainersList = v
+				return
+			end
+		end
+	end)
+	return Farm.TrainersList
+end
+
+function Farm.TrainOnce()
+	local remotes = getRemotes()
+	if not remotes then return end
+	local folder = pf()
+	if not folder then return end
+	local trainers = folder:FindFirstChild("Trainers")
+	if not trainers then return end
+	local team = folder.Customization and folder.Customization.Team.Value or "CCG"
+	local trainerName = trainers[team .. "Trainer"] and trainers[team .. "Trainer"].Value
+
+	local tkey
+	local conn
+	pcall(function()
+		conn = LocalPlayer.Backpack.DescendantAdded:Connect(function(obj)
+			if tostring(obj) == "TSCodeVal" and obj:IsA("StringValue") then
+				tkey = obj.Value
+			end
+		end)
+	end)
+
+	local result
+	pcall(function()
+		result = remotes.Trainers.RequestTraining:InvokeServer()
+	end)
+
+	if conn then
+		pcall(function() conn:Disconnect() end)
+	end
+
+	if result == "TRAINING" then
+		local sessions = Workspace:FindFirstChild("TrainingSessions")
+		if sessions then
+			for _, v in ipairs(sessions:GetChildren()) do
+				local pl = v:FindFirstChild("Player")
+				if pl and pl.Value == LocalPlayer then
+					local comm = v:FindFirstChild("Comm")
+					if comm then
+						pcall(function()
+							comm:FireServer("Finished", tkey, false)
+						end)
+					end
+					break
+				end
+			end
+		end
+	elseif result == "TRAINING COMPLETE" then
+		local list = grabTrainersList()
+		if list and trainerName then
+			local curProg = trainers[trainerName] and trainers[trainerName]:FindFirstChild("Progress")
+			local curVal = curProg and tonumber(curProg.Value) or 100
+			if curVal >= 100 then
+				for _, v in ipairs(trainers:GetDescendants()) do
+					if list and table.find(list, v.Name) then
+						local prog = v:FindFirstChild("Progress")
+						if prog and tonumber(prog.Value) < 100 then
+							pcall(function()
+								remotes.Trainers.ChangeTrainer:InvokeServer(v.Name)
+							end)
+							task.wait(1.5)
+							break
+						end
+					end
+				end
+			end
+		end
+	end
+	return result
+end
+
+function Farm.TrainLoop()
+	if Farm._trainTask then return end
+	Farm._trainTask = task.spawn(function()
+		while Farm.Enabled and Farm.AutoTrainer do
+			pcall(Farm.TrainOnce)
+			task.wait(1)
+		end
+		Farm._trainTask = nil
+	end)
+end
+
+function Farm.StopTrain()
+	if Farm._trainTask then
+		task.cancel(Farm._trainTask)
+		Farm._trainTask = nil
+	end
+end
+
+-- ===================== Reputation (working.lua) =====================
+function Farm.DoReputationQuest(getQuest)
+	local remotes = getRemotes()
+	if not remotes then return end
+	local folder = pf()
+	if not folder then return end
+	local team = folder.Customization and folder.Customization.Team.Value or "Ghoul"
+	local npc = (team == "Ghoul") and Workspace:FindFirstChild("Anteiku") and Workspace.Anteiku:FindFirstChild("Yoshimura")
+		or Workspace:FindFirstChild("CCGBuilding") and Workspace.CCGBuilding:FindFirstChild("Yoshitoki")
+	if not npc or not npc:FindFirstChild("HumanoidRootPart") then return end
+
+	teleportTo(npc.HumanoidRootPart.CFrame)
+	pcall(function()
+		remotes.Ally.AllyInfo:InvokeServer()
+	end)
+	task.wait(0.3)
+	local ind = npc:FindFirstChild("TaskIndicator")
+	local cd = ind and ind:FindFirstChild("ClickDetector")
+	if cd then
+		pcall(function() fireclickdetector(cd) end)
+	end
+
+	local _, hrp = character()
+	if not hrp then return end
+	if (npc.HumanoidRootPart.Position - hrp.Position).Magnitude > 20 then return end
+
+	if getQuest then
+		local remote = remotes:FindFirstChild(npc.Name)
+		if remote and remote:FindFirstChild("Task") then
+			pcall(function() remote.Task:InvokeServer() end)
+			task.wait(0.2)
+			pcall(function() remote.Task:InvokeServer() end)
+		end
+	else
+		pcall(function() remotes.ReputationCashOut:InvokeServer() end)
+		Farm.LastCashout = tick()
+	end
+end
+
+function Farm.TryReputationTick()
+	if Farm.ReputationCashout and tick() - Farm.LastCashout > 7200 then
+		Farm.DoReputationQuest(false)
+		return true
+	end
+	if Farm.ReputationFarm then
+		local folder = pf()
+		local cq = folder and folder:FindFirstChild("CurrentQuest")
+		local complete = cq and cq:FindFirstChild("Complete")
+		local need = complete and complete:FindFirstChild("Aogiri Member")
+		if not need then
+			Farm.DoReputationQuest(true)
+			return true
+		end
+		local val = need:FindFirstChild("Value")
+		local max = need:FindFirstChild("Max")
+		if val and max and tonumber(val.Value) >= tonumber(max.Value) then
+			Farm.DoReputationQuest(true)
+			return true
+		end
+	end
+	return false
 end
 
 function Farm.Status()
 	local st = currentStageInfo()
 	return string.format(
-		"on=%s target=%s kills=%d attacks=%d collects=%d stage=%s ranged=%s key=%s",
+		"on=%s target=%s kills=%d attacks=%d collects=%d stage=%s ranged=%s key=%s train=%s rep=%s",
 		tostring(Farm.Enabled),
 		Farm.CurrentTarget and Farm.CurrentTarget.Name or "-",
 		Farm.Stats.kills, Farm.Stats.attacks, Farm.Stats.collects,
 		tostring(Farm.Stage) .. (st and ("/" .. tostring(st.nick)) or ""),
 		tostring(Farm._rangedOn),
-		Farm.RemoteKey and (#Farm.RemoteKey .. "ch") or "?"
+		Farm.RemoteKey and (#Farm.RemoteKey .. "ch") or "?",
+		tostring(Farm.AutoTrainer),
+		tostring(Farm.ReputationFarm or Farm.ReputationCashout)
 	)
 end
 

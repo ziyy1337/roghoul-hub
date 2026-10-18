@@ -326,7 +326,7 @@ end
 
 local farm = window:new_page({ name = "Autofarm" })
 
-local farmMain = farm:new_section({ name = "General", size = 300 })
+local farmMain = farm:new_section({ name = "General", size = 240 })
 farmMain:new_button({
 	name = "Start Autofarm",
 	flag = "farm_start",
@@ -381,7 +381,7 @@ farmMain:new_slider({
 })
 
 -- Attacks (Mouse1 always active) — matches user request
-local farmAtk = farm:new_section({ name = "Attacks (Mouse1 always active)", size = "Fill" })
+local farmAtk = farm:new_section({ name = "Attacks (Mouse1 always active)", size = 280 })
 farmAtk:new_toggle({
 	name = "Attack E",
 	flag = "farm_atk_e",
@@ -441,9 +441,44 @@ farmAtk:new_button({
 	callback = function() Farm.ForceMask() end,
 })
 farmAtk:new_button({
-	name = "Open Arata (0)",
+	name = "Open Arata (Zero)",
 	flag = "farm_arata_now",
 	callback = function() Farm.OpenArata() end,
+})
+
+local farmTrain = farm:new_section({ name = "Training / Reputation", size = 200 })
+farmTrain:new_toggle({
+	name = "Auto Trainer",
+	flag = "farm_trainer",
+	state = false,
+	callback = function(s)
+		Farm.AutoTrainer = s
+		if Farm.Enabled then
+			if s then Farm.TrainLoop() else Farm.StopTrain() end
+		end
+	end,
+})
+farmTrain:new_toggle({
+	name = "Reputation Farm",
+	flag = "farm_rep_farm",
+	state = false,
+	callback = function(s) Farm.ReputationFarm = s end,
+})
+farmTrain:new_toggle({
+	name = "Auto Reputation Cashout",
+	flag = "farm_rep_cash",
+	state = false,
+	callback = function(s) Farm.ReputationCashout = s end,
+})
+farmTrain:new_button({
+	name = "Train Once",
+	flag = "farm_train_once",
+	callback = function() print("[Train]", Farm.TrainOnce()) end,
+})
+farmTrain:new_button({
+	name = "Quest Once",
+	flag = "farm_rep_once",
+	callback = function() Farm.DoReputationQuest(true) end,
 })
 
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })
@@ -470,29 +505,13 @@ farmTarget:new_seperator({ name = "Searches entire map (no range cap)" })
 
 local farmLoadout = farm:new_section({ name = "Loadout (auto)", size = 260 })
 farmLoadout:new_dropdown({
-	name = "Stage (from your HUD)",
+	name = "Stage",
 	flag = "farm_stage",
 	options = stageOpts,
 	default = stageOpts[2] or "1",
 	callback = function(v)
 		if v == "None" then Farm.Stage = "" else Farm.Stage = v end
 	end,
-})
-farmLoadout:new_dropdown({
-	name = "Quinque",
-	flag = "farm_quinque",
-	options = { "None", "IXA", "C-Katana", "Scorpion 1/56", "Narukami", "Custom" },
-	default = "IXA",
-	callback = function(v)
-		if v == "None" then Farm.Quinque = "None" else Farm.Quinque = v end
-	end,
-})
-farmLoadout:new_dropdown({
-	name = "Weapon Mode",
-	flag = "farm_wepmode",
-	options = { "Auto", "Blade", "Ranged" },
-	default = "Auto",
-	callback = function(v) Farm.WeaponMode = v end,
 })
 farmLoadout:new_button({
 	name = "Refresh Stages",

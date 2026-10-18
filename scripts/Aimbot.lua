@@ -362,10 +362,14 @@ local function applyFieldOfView()
 	end
 end
 
+local installHooks -- defined later; install only when aim is enabled
+
 function Aim.SetAimEnabled(on)
 	Aim.Enabled = on and true or false
 	Aim.AimKeyActive = Aim.Enabled
-	if not Aim.Enabled then
+	if Aim.Enabled then
+		-- pcall(installHooks) -- disabled: crashed game
+	else
 		Aim.Target = nil
 	end
 end
@@ -427,7 +431,7 @@ local function buildSpoof(self, key)
 	return nil, false
 end
 
-local function installHooks()
+installHooks = function()
 	local wrap = (type(newcclosure) == "function") and newcclosure or function(f) return f end
 	local function safeCheckcaller()
 		if type(checkcaller) == "function" then return checkcaller() end
@@ -539,13 +543,7 @@ RunService.RenderStepped:Connect(function(dt)
 	pcall(updateIndicators)
 end)
 
-task.defer(function()
-	local installed = installHooks()
-	if not installed then
-		warn("[Aimbot] Could not install mouse hooks")
-	else
-		print("[Aimbot] Hooks ready: game=" .. tostring(hookedGame) .. " mouse=" .. tostring(hookedMouse))
-	end
-end)
+-- Hooks install lazily on Aim.SetAimEnabled(true) so loading the hub
+-- does not break walking / menus with a half-broken __index hook.
 
 return Aim

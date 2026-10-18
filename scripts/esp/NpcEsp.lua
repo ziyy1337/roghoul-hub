@@ -9,7 +9,7 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 local NpcEsp = {
-	Enabled = false, -- off by default; toggle in menu
+	Enabled = false, -- off by default
 	MaxDistance = 2500,
 	ShowNames = true,
 	ShowHealth = true,
@@ -92,8 +92,8 @@ local function rebuild()
 	for _, d in ipairs(Workspace:GetDescendants()) do
 		-- cheap filters first
 		if d:IsA("Model") and not playerChars[d] then
-			local okName, nm = pcall(function() return d.Name end)
-			nm = (okName and nm) and tostring(nm) or ""
+			local okN, nm = pcall(function() return d.Name end)
+			nm = (okN and nm) and tostring(nm) or ""
 			if not nm:find("Corpse", 1, true) and not nm:find("Dead", 1, true) then
 				local hum = d:FindFirstChildOfClass("Humanoid")
 				if hum and hum.MaxHealth < 1e6 and hum.MaxHealth > 0 then
@@ -155,9 +155,7 @@ local function update()
 	end
 
 	Camera = Workspace.CurrentCamera
-	if not Camera then
-		return
-	end
+	if not Camera or not Camera.CFrame then return end
 	local now = os.clock()
 
 	-- throttled full rescan
@@ -175,9 +173,7 @@ local function update()
 	end
 
 	local camPos = Camera.CFrame and Camera.CFrame.Position
-	if not camPos then
-		return
-	end
+	if not camPos then return end
 	local maxDist = NpcEsp.MaxDistance
 	local showBox, showNames, showHp = NpcEsp.ShowBox, NpcEsp.ShowNames, NpcEsp.ShowHealth
 
@@ -260,9 +256,7 @@ Workspace.DescendantRemoving:Connect(requestRescan)
 RunService.Heartbeat:Connect(function()
 	if not NpcEsp.Enabled then return end
 	local ok, err = pcall(update)
-	if not ok then
-		warn("[NpcEsp]", err)
-	end
+	if not ok then warn("[NpcEsp]", err) end
 end)
 
 function NpcEsp.Refresh()

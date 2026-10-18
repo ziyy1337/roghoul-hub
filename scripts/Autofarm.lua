@@ -942,7 +942,7 @@ function Farm.Start()
 Farm._rangedOn = false
 	appliedMode = nil
 	Farm.LastEquip = 0
-	Farm.LastCashout = tick()
+	Farm.LastCashout = 0 -- working.lua oldtick = 0: cashout allowed immediately on start
 
 	-- open mask + arata immediately (no throttle wait)
 	Farm.LastMask = 0
@@ -1173,59 +1173,99 @@ local function getQuestNPC()
 end
 
 -- typ=true → get quest, typ=false → cashout
+-- Mirrors working.lua getQuest: AllyInfo → click TaskIndicator → dist<=20 →
+-- Task invoke x2 → wait for CurrentQuest.Complete["Aogiri Member"]
 local function getQuest(typ)
-	print("[Autofarm] rep getQuest typ=", typ)
+	print("[Autofarm] rep getQuest typ=", tostring(typ))
 	local remotes = getRemotes()
-	if not remotes then return end
+	if not remotes then
+		print("[Autofarm] rep no remotes")
+		return false
+	end
 	local npc = getQuestNPC()
 	if not npc or not npc:FindFirstChild("HumanoidRootPart") then
 		print("[Autofarm] rep npc missing")
-		return
+		return false
 	end
+	local npcRoot = npc.HumanoidRootPart
 
-	teleportTo(npc.HumanoidRootPart.CFrame)
-	local _, hrp = character()
-	local dist = hrp and (npc.HumanoidRootPart.Position - hrp.Position).Magnitude or 999999
-	if hrp and dist > 20 then
-		pcall(function() hrp.CFrame = npc.HumanoidRootPart.CFrame end)
-		dist = (npc.HumanoidRootPart.Position - hrp.Position).Magnitude
-	end
-	print("[Autofarm] rep dist=", math.floor(dist))
+	teleportTo(npcRoot.CFrame)
 
 	pcall(function()
 		remotes.Ally.AllyInfo:InvokeServer()
 	end)
-	task.wait()
+	task.wait(0.1)
 	local ind = npc:FindFirstChild("TaskIndicator")
 	local cd = ind and ind:FindFirstChild("ClickDetector")
 	if cd then
 		pcall(function() fireclickdetector(cd) end)
+	else
+		print("[Autofarm] rep no TaskIndicator.ClickDetector")
 	end
 
+	-- fresh dist check like working.lua (post-click); force CFrame if stuck
+	local _, hrp = character()
+	if not hrp or not Farm.Enabled then
+		print("[Autofarm] rep abort (dead/disabled)")
+		return false
+	end
+	local dist = (npcRoot.Position - hrp.Position).Magnitude
+	if dist > 20 then
+		pcall(function() hrp.CFrame = npcRoot.CFrame end)
+		dist = (npcRoot.Position - hrp.Position).Magnitude
+	end
 	if not Farm.Enabled or not hrp or dist > 20 then
-		print("[Autofarm] rep abort")
-		return
+		print("[Autofarm] rep abort dist=", math.floor(dist))
+		return false
 	end
 
 	if typ then
 		local remote = remotes:FindFirstChild(npc.Name)
 		local taskRf = remote and remote:FindFirstChild("Task")
-		if taskRf then
-			pcall(function() taskRf:InvokeServer() end)
-			task.wait(0.2)
-			pcall(function() taskRf:InvokeServer() end)
-			print("[Autofarm] rep quest ok")
-		else
-			print("[Autofarm] rep no Task remote")
+		if not taskRf then
+			print("[Autofarm] rep no Task remote under", npc.Name)
+			return false
 		end
+		-- re-assert position immediately before Task invokes
+		pcall(function() hrp.CFrame = npcRoot.CFrame end)
+		local ok1 = pcall(function() taskRf:InvokeServer() end)
+		local ok2 = pcall(function() taskRf:InvokeServer() end)
+		if not ok1 and not ok2 then
+			print("[Autofarm] rep Task invoke failed")
+			return false
+		end
+		-- working.lua: wait for quest to actually appear (timeout-capped)
+		local quest
+		local deadline = tick() + 8
+		repeat
+			local folder2 = pf()
+			local cq = folder2 and folder2:FindFirstChild("CurrentQuest")
+			local complete = cq and cq:FindFirstChild("Complete")
+			quest = complete and complete:FindFirstChild("Aogiri Member")
+			if quest then break end
+			task.wait(0.1)
+		until tick() >= deadline
+		if quest then
+			print("[Autofarm] rep quest granted")
+			return true
+		end
+		print("[Autofarm] rep quest did not spawn after Task invoke")
+		return false
 	else
-		pcall(function() remotes.ReputationCashOut:InvokeServer() end)
-		Farm.LastCashout = tick()
-		print("[Autofarm] rep cashout done")
+		local ok = pcall(function() remotes.ReputationCashOut:InvokeServer() end)
+		if ok then
+			Farm.LastCashout = tick()
+			print("[Autofarm] rep cashout done")
+			return true
+		end
+		print("[Autofarm] rep cashout invoke failed")
+		return false
 	end
 end
 
 -- called from main loop — same condition as working.lua farm while
+-- returns true only when a quest was actually granted, so the loop retries
+-- on failure instead of skipping forever
 function reputationTick()
 	local folder = pf()
 	if not folder then return false end
@@ -1247,12 +1287,11 @@ function reputationTick()
 
 	if Farm.ReputationFarm and (missing or done) then
 		print("[Autofarm] rep needQuest miss=", missing, " done=", done)
-		getQuest(true)
-		return true
+		return getQuest(true) == true
 	elseif Farm.ReputationCashout and tick() - Farm.LastCashout > 7200 then
 		print("[Autofarm] rep needCashout")
 		getQuest(false)
-		return false
+		return false -- working.lua keeps farming after cashout
 	end
 	return false
 end

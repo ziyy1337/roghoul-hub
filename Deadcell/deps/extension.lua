@@ -206,6 +206,10 @@ local drawing = {} do
     local objconnections = {}
     local objmtchildren = {}
     local scrollpositions = {}
+    local scrolltargets = {}
+    local scrollanimstarted = false
+    local cameralockactive = false
+    local cameralockoriginals = nil
     local currentcanvasposobjs = {}
     local childrenposupdates = {}
     local childrenvisupdates = {}
@@ -221,6 +225,120 @@ local drawing = {} do
                 end
             end
         end
+    end
+
+    local function clampscrolloffset(mt, offset)
+        local obj = mtobjs[mt]
+        if not obj then
+            return offset or 0
+        end
+
+        local contentheight = listcontents[mt] or 0
+        local minscroll = math.min(0, obj.Size.Y - contentheight)
+        return math.clamp(offset, minscroll, 0)
+    end
+
+    local function applyscrolloffset(mt, newoffset)
+        local current = scrollpositions[mt] or 0
+        local delta = newoffset - current
+
+        if delta == 0 then
+            return false
+        end
+
+        scrollpositions[mt] = newoffset
+
+        local colobj = mtobjs[mt]
+        if not colobj then
+            return false
+        end
+
+        local colpos = colobj.Position
+        local colsize = colobj.Size
+
+        for _, object in next, objchildren[mt] do
+            local newpos = object.Position + Vector2.new(0, delta)
+            childrenposupdates[objmts[object]](objmts[object], newpos)
+            object.Position = newpos
+
+            local visible = istouching(newpos, object.Size, colpos, colsize)
+            if object.Visible ~= visible then
+                object.Visible = visible
+                childrenvisupdates[objmts[object]](objmts[object], visible)
+            end
+        end
+
+        return true
+    end
+
+    local function startscrollanimator()
+        if scrollanimstarted then
+            return
+        end
+
+        scrollanimstarted = true
+
+        services.RunService.Heartbeat:Connect(function(dt)
+            if dt <= 0 then
+                dt = 1 / 60
+            end
+
+            for mt, target in next, scrolltargets do
+                if scrollobjs[mt] and mtobjs[mt] and objexists[mtobjs[mt]] and mtobjs[mt].Visible then
+                    local clamped = clampscrolloffset(mt, target)
+                    local current = scrollpositions[mt] or 0
+                    local delta = clamped - current
+
+                    if math.abs(delta) > 0.4 then
+                        local move = delta * math.clamp(dt * 16, 0, 1)
+                        if math.abs(clamped - (current + move)) < 0.4 then
+                            move = delta
+                        end
+                        applyscrolloffset(mt, current + move)
+                    elseif current ~= clamped then
+                        applyscrolloffset(mt, clamped)
+                    end
+
+                    scrolltargets[mt] = clamped
+                end
+            end
+
+            local hovering = false
+            for mt in next, scrollobjs do
+                local obj = mtobjs[mt]
+                if obj and objexists[obj] and obj.Visible and ismouseover(obj) then
+                    hovering = true
+                    break
+                end
+            end
+
+            if hovering and not cameralockactive then
+                local plr = services.Players.LocalPlayer
+                local cam = services.Workspace.CurrentCamera
+
+                if plr and cam then
+                    cameralockoriginals = {
+                        min = plr.CameraMinZoomDistance,
+                        max = plr.CameraMaxZoomDistance,
+                    }
+
+                    local mag = math.clamp((cam.CFrame.Position - cam.Focus.Position).Magnitude, 0.5, 128)
+                    plr.CameraMinZoomDistance = mag
+                    plr.CameraMaxZoomDistance = mag
+                    cameralockactive = true
+                end
+            elseif not hovering and cameralockactive then
+                local plr = services.Players.LocalPlayer
+
+                if plr and cameralockoriginals then
+                    plr.CameraMinZoomDistance = cameralockoriginals.min
+                    plr.CameraMaxZoomDistance = cameralockoriginals.max
+                end
+
+                cameralockactive = false
+                cameralockoriginals = nil
+            end
+        end)
     end
 
     services.InputService.InputEnded:Connect(function(input, gpe)
@@ -356,62 +474,31 @@ local drawing = {} do
             scrollfunc = function(self)
                 if listobjs[self] then
                     scrollpositions[self] = 0
+                    scrolltargets[self] = 0
                     scrollobjs[self] = true
 
                     -- do NOT enable ClipsDescendants here: the Parent handler would hide
                     -- overflow children immediately (sections taller than the column).
-                    -- Clipping only kicks in on the first real wheel scroll below.
-
-                    local function scroll(amount)
-                        -- Fixed-step clamped scroll. The old section-jump math looked up the
-                        -- "closest" child after the move and crashed on nil when the first
-                        -- section was taller than a single step (left Autofarm column).
-                        local step = 55
-                        local colpos = mtobjs[self].Position
-                        local colsize = mtobjs[self].Size
-                        local contentheight = listcontents[self] or 0
-                        local minscroll = math.min(0, colsize.Y - contentheight)
-                        local current = scrollpositions[self] or 0
-                        local newoffset = math.clamp(current + (amount == 1 and -step or step), minscroll, 0)
-                        local delta = newoffset - current
-
-                        if delta == 0 then
-                            return false
-                        end
-
-                        scrollpositions[self] = newoffset
-
-                        for i, object in next, objchildren[self] do
-                            childrenposupdates[objmts[object]](objmts[object], object.Position + Vector2.new(0, delta))
-                            object.Position = object.Position + Vector2.new(0, delta)
-
-                            if istouching(object.Position, object.Size, colpos, colsize) then
-                                object.Visible = true
-                                childrenvisupdates[objmts[object]](objmts[object], true)
-                            else
-                                object.Visible = false
-                                childrenvisupdates[objmts[object]](objmts[object], false)
-                            end
-                        end
-
-                        return true
-                    end
+                    -- Visibility is driven by applyscrolloffset while scrolling.
 
                     refreshscrolling = function()
-                        repeat
-                        until
-                            not scroll(-1)
+                        scrolltargets[self] = 0
+                        applyscrolloffset(self, 0)
                     end
 
                     self.InputChanged:Connect(function(input)
                         if input.UserInputType == Enum.UserInputType.MouseWheel then
-                            if input.Position.Z > 0 then
-                                scroll(-1)
-                            else
-                                scroll(1)
-                            end
+                            local z = input.Position.Z
+                            local colsize = mtobjs[self].Size
+                            local step = math.max(50, colsize.Y * 0.22) * math.clamp(math.abs(z), 1, 3)
+                            local current = scrollpositions[self] or 0
+                            local target = clampscrolloffset(self, z > 0 and (current + step) or (current - step))
+                            scrolltargets[self] = target
+                            startscrollanimator()
                         end
                     end)
+
+                    startscrollanimator()
                 else
                     attemptedscrollable = true
                 end

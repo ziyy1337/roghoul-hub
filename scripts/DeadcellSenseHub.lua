@@ -24,8 +24,9 @@ Aim.SilentAim = false
 Aim.CameraAim = false
 GyakuEsp.Enabled = false
 
+-- Sense off until user enables (avoids stack-overflow spam with hooks)
 local enemy = Sense.teamSettings.enemy
-enemy.enabled = true
+enemy.enabled = false
 enemy.box = true
 enemy.boxColor = { Color3.fromRGB(255, 80, 80), 1 }
 enemy.boxOutline = true
@@ -676,6 +677,5 @@ menu:new_toggle({
 	end,
 })
 
-pcall(function() Sense.Load() end) -- errors here are isolated
-
-return library, Sense, NpcEsp, GyakuEsp, Aim, Farm
+	-- Sense loads only when "Enabled" is toggled on (see Visuals → Players)
+	return library, Sense, NpcEsp, GyakuEsp, Aim, Farm

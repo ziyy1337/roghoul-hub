@@ -897,45 +897,76 @@ end
 
 local hitSpoofInstalled = false
 local function installHitSpoof()
-	if hitSpoofInstalled or not hookmetamethod then return end
-	if not getrawmetatable then
-		warn("[Autofarm] no getrawmetatable; skip hit spoof")
+	if hitSpoofInstalled then return end
+	if not hookmetamethod or not getrawmetatable then return end
+
+	-- one hook per game session even if hub is re-executed
+	if getgenv and getgenv().__roghoulHitHook then
+		hitSpoofInstalled = true
 		return
 	end
-	hitSpoofInstalled = true
 
-	-- capture original BEFORE hook (hookmetamethod return can be nil here)
-	local mt = getrawmetatable(game)
-	local orig = mt and mt.__index
+	local m = LocalPlayer:GetMouse()
+	if not m then return end
 
-	local ok = pcall(function()
-		hookmetamethod(game, "__index", newcclosure(function(self, key)
-			if not checkcaller() and key == "Hit" and Farm.Enabled then
-				local target = Farm.CurrentTarget
-				local part = target and (target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart"))
-				if part and typeof(self) == "Instance" and self.ClassName == "PlayerMouse" then
+	local mt = getrawmetatable(m)
+	if not mt then return end
+	local orig = mt.__index
+	-- never chain onto ourselves
+	if getgenv and orig == getgenv().__roghoulHitHook then return end
+
+	local inHook = false
+	local hookFn = nil
+	hookFn = newcclosure and newcclosure(function(self, key)
+		if inHook then
+			if type(orig) == "function" then return orig(self, key) end
+			return nil
+		end
+		if not checkcaller() and key == "Hit" and Farm.Enabled then
+			local target = Farm.CurrentTarget
+			local part = target and (target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart"))
+			if part and typeof(self) == "Instance" then
+				local cn = self.ClassName
+				if cn == "PlayerMouse" or cn == "Mouse" then
+					inHook = true
 					local cam = Workspace.CurrentCamera
+					local result
 					if cam then
-						return CFrame.new(part.Position) * (cam.CFrame - cam.CFrame.Position)
+						result = CFrame.new(part.Position) * (cam.CFrame - cam.CFrame.Position)
+					else
+						result = CFrame.new(part.Position)
 					end
-					return CFrame.new(part.Position)
+					inHook = false
+					return result
 				end
 			end
+		end
+		inHook = true
+		local ok, r = pcall(function()
 			if type(orig) == "function" then
 				return orig(self, key)
 			end
-			-- table __index fallback
-			if type(orig) == "table" then
-				local v = orig[key]
-				if type(v) == "function" then
-					return v(self)
-				end
-				return v
-			end
 			return nil
-		end))
+		end)
+		inHook = false
+		if ok then return r end
+		return nil
+	end) or function(self, key)
+		return nil
+	end
+
+	local ok = pcall(function()
+		hookmetamethod(m, "__index", hookFn)
+		if getgenv then
+			getgenv().__roghoulHitHook = hookFn
+		end
 	end)
-	if ok then print("[Autofarm] Mouse.Hit spoof installed") else warn("[Autofarm] Mouse.Hit spoof failed") end
+	if ok then
+		hitSpoofInstalled = true
+		print("[Autofarm] Mouse.Hit spoof installed (mouse only)")
+	else
+		warn("[Autofarm] Mouse.Hit spoof failed")
+	end
 end
 
 function Farm.Start()

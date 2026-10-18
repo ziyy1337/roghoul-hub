@@ -432,66 +432,58 @@ local function buildSpoof(self, key)
 end
 
 installHooks = function()
+	-- only hook PlayerMouse metatable (never game — game hook caused C stack overflow / crash on leave)
+	if hookedMouse then return hookedMouse end
+	if type(hookmetamethod) ~= "function" or not getrawmetatable then return false end
+	if getgenv and getgenv().__roghoulAimHook then
+		hookedMouse = true
+		return true
+	end
+
 	local wrap = (type(newcclosure) == "function") and newcclosure or function(f) return f end
 	local function safeCheckcaller()
 		if type(checkcaller) == "function" then return checkcaller() end
 		return false
 	end
 
-	-- Method A: game metatable __index
-	if not hookedGame and type(hookmetamethod) == "function" and getrawmetatable then
-		local ok = pcall(function()
-			local mt = getrawmetatable(game)
-			local orig = mt and mt.__index
-			oldGameIndex = function(self, key)
+	local m = getMouse()
+	if not m then return false end
+
+	local ok = pcall(function()
+		local mt = getrawmetatable(m)
+		local orig = mt and mt.__index
+		local inHook = false
+		local hookFn = wrap(function(self, key)
+			if inHook then
 				if type(orig) == "function" then return orig(self, key) end
-				if type(orig) == "table" then
-					local v = orig[key]
-					if type(v) == "function" then return v(self) end
-					return v
-				end
 				return nil
 			end
-			hookmetamethod(game, "__index", wrap(function(self, key)
-				if not safeCheckcaller() then
-					local spoof, hit = buildSpoof(self, key)
-					if hit then return spoof end
-				end
-				return oldGameIndex(self, key)
-			end))
-		end)
-		hookedGame = ok
-	end
-
-	-- Method B: PlayerMouse metatable
-	if not hookedMouse then
-		local m = getMouse()
-		if m and type(hookmetamethod) == "function" and getrawmetatable then
-			local ok = pcall(function()
-				local mt = getrawmetatable(m)
-				local orig = mt and mt.__index
-				oldMouseIndex = function(self, key)
-					if type(orig) == "function" then return orig(self, key) end
-					if type(orig) == "table" then
-						local v = orig[key]
-						if type(v) == "function" then return v(self) end
-						return v
-					end
-					return nil
-				end
-				hookmetamethod(m, "__index", wrap(function(self, key)
-					if not safeCheckcaller() then
-						local spoof, hit = buildSpoof(self, key)
-						if hit then return spoof end
-					end
-					return oldMouseIndex(self, key)
-				end))
+			if not safeCheckcaller() then
+				inHook = true
+				local spoof, hit = buildSpoof(self, key)
+				inHook = false
+				if hit then return spoof end
+			end
+			inHook = true
+			local ok2, r = pcall(function()
+				if type(orig) == "function" then return orig(self, key) end
+				return nil
 			end)
-			hookedMouse = ok
+			inHook = false
+			if ok2 then return r end
+			return nil
+		end)
+		oldMouseIndex = function(self, key)
+			if type(orig) == "function" then return orig(self, key) end
+			return nil
 		end
-	end
-
-	return hookedGame or hookedMouse
+		hookmetamethod(m, "__index", hookFn)
+		if getgenv then
+			getgenv().__roghoulAimHook = hookFn
+		end
+	end)
+	hookedMouse = ok
+	return hookedMouse
 end
 
 local function reinstallMouseHook()

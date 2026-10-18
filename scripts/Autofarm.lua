@@ -208,16 +208,17 @@ end
 local function hasEquip()
 	local c = LocalPlayer.Character
 	if not c then return false end
+	-- working.lua: if not Kagune and not Quinque then equip
 	return c:FindFirstChild("Kagune") ~= nil or c:FindFirstChild("Quinque") ~= nil
 end
 
-local function isRanged()
-	-- best-effort: CanToggleWep + SpecialBonusCD; no clean "form" value on client.
-	-- We track last C press; RangeMode waits for equip then presses C once.
-	return Farm._rangedOn == true
+local function isWeaponOut()
+	local c = LocalPlayer.Character
+	if not c then return false end
+	return c:FindFirstChild("Kagune") ~= nil or c:FindFirstChild("Quinque") ~= nil
 end
 
--- ===================== noclip =====================
+-- ===================== noclip + anti-detect (z4gs anti-fly style) =====================
 local function setNoclip(on)
 	if on and not Farm._noclipConn then
 		Farm._noclipConn = RunService.Stepped:Connect(function()
@@ -235,48 +236,101 @@ local function setNoclip(on)
 	end
 end
 
--- ===================== teleport (z4gs tween) =====================
-local function teleportTo(pos, cancelWhen)
-	local c, hrp, hum = character()
-	if not hrp then return end
-	local dist = (hrp.Position - pos.p).Magnitude
-	local info = TweenInfo.new(math.max(dist / math.clamp(Farm.TeleportSpeed, 30, 250), 0.05), Enum.EasingStyle.Linear)
-	local val = Instance.new("CFrameValue")
-	val.Value = hrp.CFrame
-	local tween = TweenService:Create(val, info, { Value = pos })
-	tween:Play()
-	local done = false
-	tween.Completed:Connect(function() done = true end)
-	while not done do
-		if not Farm.Enabled then tween:Cancel() break end
-		if cancelWhen and cancelWhen() then tween:Cancel() break end
-		if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-			tween:Cancel()
-			break
-		end
-		if LocalPlayer.Character.Humanoid.Health <= 0 then
-			tween:Cancel()
-			break
-		end
-		LocalPlayer.Character.HumanoidRootPart.CFrame = val.Value
-		if Farm.Noclip then
+-- Hide HRP CFrame spam from simple GetChildren scans while we teleport
+local function withStealth(fn)
+	if not Farm.Noclip then
+		return fn()
+	end
+	local protected = {}
+	local hidden = {}
+	pcall(function()
+		local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return fn() end
+		-- random decoy part parented near character, name-guessed off lists
+		local decoy = Instance.new("Part")
+		decoy.Name = string.rep("z", math.random(6, 10))
+		decoy.Size = Vector3.new(0.05, 0.05, 0.05)
+		decoy.Transparency = 1
+		decoy.Anchored = true
+		decoy.CanCollide = false
+		decoy.CFrame = hrp.CFrame
+		decoy.Parent = workspace
+		table.insert(protected, decoy)
+
+		-- disable ChildAdded watchers briefly while we move (anti-detect pattern)
+		for _, signal in ipairs({ workspace.ChildAdded, workspace.DescendantAdded }) do
 			pcall(function()
-				LocalPlayer.Character.HumanoidRootPart.CanCollide = false
+				for _, conn in ipairs(getconnections(signal)) do
+					if conn.Enabled then
+						conn:Disable()
+						table.insert(hidden, conn)
+					end
+				end
 			end)
 		end
-		task.wait()
+
+		local result = fn()
+
+		for _, conn in ipairs(hidden) do
+			pcall(function() conn:Enable() end)
+		end
+		for _, obj in ipairs(protected) do
+			pcall(function() obj:Destroy() end)
+		end
+		return result
+	end)
+	-- fallback if pcall setup failed
+	return fn()
+end
+
+-- ===================== teleport — exact working.lua fly method =====================
+local function teleportTo(pos)
+	local c, hrp, hum = character()
+	if not hrp then return end
+	if not pos or (typeof(pos) ~= "CFrame" and typeof(pos) ~= "Vector3") then return end
+	if typeof(pos) == "Vector3" then
+		pos = CFrame.new(pos)
 	end
-	val:Destroy()
+
+	withStealth(function()
+		local val = Instance.new("CFrameValue")
+		val.Value = hrp.CFrame
+		local dist = (hrp.Position - pos.p).Magnitude
+		local tween = TweenService:Create(
+			val,
+			TweenInfo.new(dist / math.clamp(Farm.TeleportSpeed, 30, 250), Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, 0),
+			{ Value = pos }
+		)
+		tween:Play()
+		local completed = false
+		tween.Completed:Connect(function() completed = true end)
+		while not completed do
+			if not Farm.Enabled then tween:Cancel() break end
+			local ch = LocalPlayer.Character
+			if not ch or not ch:FindFirstChild("HumanoidRootPart") or ch.Humanoid.Health <= 0 then
+				tween:Cancel()
+				break
+			end
+			ch.HumanoidRootPart.CFrame = val.Value
+			if Farm.Noclip then
+				ch.HumanoidRootPart.CanCollide = false
+			end
+			task.wait()
+		end
+		val:Destroy()
+	end)
 end
 
 -- ===================== loadout =====================
 local function ensureEquip()
-	if tick() - Farm.LastEquip < 0.4 then return end
-	if hasEquip() then
+	-- working.lua:
+	-- if not FindFirstChild("Kagune") and not FindFirstChild("Quinque") then pressKey(stage) end
+	if tick() - Farm.LastEquip < 0.35 then return end
+	local c = LocalPlayer.Character
+	if c and (c:FindFirstChild("Kagune") or c:FindFirstChild("Quinque")) then
 		Farm.LastEquip = tick()
 		return
 	end
-	-- press stage word (One, Two, ...) like z4gs
 	pressKey(stageWord())
 	Farm.LastEquip = tick()
 end
@@ -466,10 +520,10 @@ local function attackOnce(target)
 	-- silent: aim Mouse.Hit at target (hook spoofs Hit; camera untouched)
 	local hit = CFrame.lookAt(hrpPart.Position, Workspace.CurrentCamera.CFrame.Position)
 
-	-- stand near target like z4gs (lookVector offset)
+	-- working.lua kill position:
+	-- HRP.CFrame = npc.HRP.CFrame + npc.HRP.CFrame.lookVector * DistanceFromNpc
 	if not Farm.RangeMode then
-		local stand = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.clamp(Farm.DistanceFromNpc, 2, 15))
-		myHrp.CFrame = CFrame.new(stand.Position) * CFrame.lookAt(stand.Position, hrpPart.Position)
+		myHrp.CFrame = hrpPart.CFrame + hrpPart.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
 	end
 
 	pressKey("Mouse1", hit)
@@ -566,13 +620,29 @@ local function loop()
 		if target then
 			local part = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
 			if part then
+				-- working.lua approach: keep re-tp to lookVector offset while killing
+				local isBoss = (target.Name == "Gyakusatsu") or (target.Parent and target.Parent.Name == "GyakusatsuSpawn")
+				local dest
+				if isBoss then
+					dest = part.CFrame * CFrame.Angles(math.rad(90), 0, 0) + Vector3.new(0, 8, 0)
+				else
+					dest = part.CFrame + part.CFrame.LookVector * (-math.abs(Farm.DistanceFromNpc))
+				end
+
 				local dist = (part.Position - hrp.Position).Magnitude
-				if dist > 25 then
-					teleportTo(part.CFrame + Vector3.new(0, 2, 0))
-				elseif dist > 8 then
-					teleportTo(part.CFrame + Vector3.new(0, 2, 0))
-				elseif tick() - Farm.LastAttack >= Farm.FarmDelay then
-					pcall(attackOnce, target)
+				if dist > 20 then
+					teleportTo(dest)
+				elseif dist > 5 or tick() - Farm.LastAttack >= Farm.FarmDelay then
+					-- keep glued like z4gs kill loop
+					pcall(function()
+						local _, myHrp = character()
+						if myHrp and not Farm.RangeMode then
+							myHrp.CFrame = dest
+						end
+					end)
+					if tick() - Farm.LastAttack >= Farm.FarmDelay then
+						pcall(attackOnce, target)
+					end
 				end
 			end
 		end

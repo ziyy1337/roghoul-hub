@@ -76,6 +76,7 @@ local Farm = {
 	LastRange = 0,
 	LastEquip = 0,
 	LastCashout = 0,
+	LastQuestTry = 0,
 	LastRefill = 0,
 	_baseWalkSpeed = 48,
 	Stats = { attacks = 0, collects = 0, kills = 0 },
@@ -942,7 +943,8 @@ function Farm.Start()
 Farm._rangedOn = false
 	appliedMode = nil
 	Farm.LastEquip = 0
-	Farm.LastCashout = 0 -- working.lua oldtick = 0: cashout allowed immediately on start
+	-- LastCashout intentionally NOT reset: a Start/Stop must not re-trigger
+	-- cashout/quest trips while an unfinished quest is still active
 
 	-- open mask + arata immediately (no throttle wait)
 	Farm.LastMask = 0
@@ -1234,18 +1236,27 @@ local function getQuest(typ)
 			print("[Autofarm] rep Task invoke failed")
 			return false
 		end
-		-- working.lua: wait for quest to actually appear (timeout-capped)
-		local quest
-		local deadline = tick() + 8
-		repeat
+		-- wait for a FRESH quest: entry must exist AND Value < Max.
+		-- A just-finished quest already sits at Value==Max, so merely finding
+		-- the child would return "granted" while the old quest is still there.
+		local function freshQuest()
 			local folder2 = pf()
 			local cq = folder2 and folder2:FindFirstChild("CurrentQuest")
 			local complete = cq and cq:FindFirstChild("Complete")
-			quest = complete and complete:FindFirstChild("Aogiri Member")
-			if quest then break end
+			local q = complete and complete:FindFirstChild("Aogiri Member")
+			if not q then return false end
+			local ok, fresh = pcall(function()
+				return tonumber(q.Value) < tonumber(q.Max.Value)
+			end)
+			return ok and fresh == true
+		end
+		local deadline = tick() + 8
+		local granted = freshQuest()
+		while not granted and tick() < deadline and Farm.Enabled do
 			task.wait(0.1)
-		until tick() >= deadline
-		if quest then
+			granted = freshQuest()
+		end
+		if granted then
 			print("[Autofarm] rep quest granted")
 			return true
 		end
@@ -1285,10 +1296,23 @@ function reputationTick()
 		end
 	end
 
+	-- unfinished quest (0 < Value < Max): nothing to do — never re-trip
+	if quest and not missing and not done then
+		return false
+	end
+
 	if Farm.ReputationFarm and (missing or done) then
+		if tick() - Farm.LastQuestTry < 2.5 then
+			return false -- let the previous invoke breathe before retrying
+		end
+		Farm.LastQuestTry = tick()
 		print("[Autofarm] rep needQuest miss=", missing, " done=", done)
 		return getQuest(true) == true
 	elseif Farm.ReputationCashout and tick() - Farm.LastCashout > 7200 then
+		if tick() - Farm.LastQuestTry < 2.5 then
+			return false
+		end
+		Farm.LastQuestTry = tick()
 		print("[Autofarm] rep needCashout")
 		getQuest(false)
 		return false -- working.lua keeps farming after cashout

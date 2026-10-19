@@ -510,7 +510,7 @@ end
 --   Back of BR → north side, blocked by ShopsL.Collision
 --   Back of BL → south side behind PartsStore, blocked by ShopsR.Collision
 local GYA_CAMPS = {
-	["Back of BR"] = Vector3.new(-396.5, 64, 192.6),
+	["Back of BR"] = Vector3.new(-388.5, 64, 192.6),
 	["Back of BL"] = Vector3.new(-396.5, 64, 352.4),
 }
 

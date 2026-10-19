@@ -1,7 +1,7 @@
 --// Shows both gya camp position markers (standalone, not part of the hub)
 -- Mirrored pair on the same X row, equidistant from the statue center (z≈272.5):
 local SPOTS = {
-	{ name = "BR Camp", pos = Vector3.new(-396.5, 64, 192.6), color = Color3.fromRGB(0, 255, 120) },
+	{ name = "BR Camp", pos = Vector3.new(-388.5, 64, 192.6), color = Color3.fromRGB(0, 255, 120) },
 	{ name = "BL Camp", pos = Vector3.new(-396.5, 64, 352.4), color = Color3.fromRGB(0, 170, 255) },
 }
 

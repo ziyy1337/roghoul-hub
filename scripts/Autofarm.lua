@@ -505,10 +505,12 @@ end
 
 -- ===================== gya farm camp =====================
 -- Verified spots behind the mall buildings (statue LOS blocked, floor y≈61):
---   Back of BR → behind ShopsL near the BR heart corner
---   Back of BL → user-picked spot behind PartsStore (ShopsR), same cover pattern
+--   Both user-picked pattern: same X row, mirrored Z across statue center (z≈272.5),
+--   both 195 studs from statue, LOS blocked by the mall's north/south collision walls.
+--   Back of BR → north side, blocked by ShopsL.Collision
+--   Back of BL → south side behind PartsStore, blocked by ShopsR.Collision
 local GYA_CAMPS = {
-	["Back of BR"] = Vector3.new(-500, 64, 165),
+	["Back of BR"] = Vector3.new(-396.5, 64, 192.6),
 	["Back of BL"] = Vector3.new(-396.5, 64, 352.4),
 }
 

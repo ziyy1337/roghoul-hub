@@ -543,8 +543,13 @@ farmGya:new_toggle({
 	state = false,
 	callback = function(s)
 		Farm.GyaFarm = s
-		if s and not Farm.Enabled then
-			Farm.Start()
+		if s then
+			if not Farm.Enabled then
+				Farm.Start()
+			end
+		else
+			-- untick = stop entirely; never fall back to group farming
+			Farm.Stop()
 		end
 	end,
 })

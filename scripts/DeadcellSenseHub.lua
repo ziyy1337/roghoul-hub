@@ -536,6 +536,36 @@ for _, skillKey in ipairs({ "E", "R", "F", "C" }) do
 	})
 end
 
+local farmGya = farm:new_section({ name = "Gya Farm", size = 200 })
+farmGya:new_toggle({
+	name = "Gya Farm (camp + kill statue)",
+	flag = "farm_gya",
+	state = false,
+	callback = function(s)
+		Farm.GyaFarm = s
+		if s and not Farm.Enabled then
+			Farm.Start()
+		end
+	end,
+})
+farmGya:new_dropdown({
+	name = "Camp Spot",
+	flag = "farm_gya_camp",
+	options = { "Back of BR", "Back of BL", "My Position" },
+	default = "Back of BR",
+	callback = function(v) Farm.GyaCamp = v end,
+})
+farmGya:new_button({
+	name = "Save Camp = My Position",
+	flag = "farm_gya_save",
+	callback = function()
+		if Farm.SaveGyaCampHere() then
+			print("[Autofarm] camp set to current position")
+		end
+	end,
+})
+farmGya:new_seperator({ name = "Waits at camp (statue can't see you) until it spawns" })
+
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })
 farmTarget:new_dropdown({
 	name = "NPC Group",

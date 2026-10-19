@@ -65,6 +65,12 @@ local Farm = {
 	ReputationFarm = false,
 	ReputationCashout = false,
 
+	-- Gya Farm: camp behind the building at BR/BL, kill statue on spawn
+	GyaFarm = false,
+	GyaCamp = "Back of BR",
+	GyaCampPos = nil, -- set by SaveGyaCampHere
+	_gyaCampT = 0,
+
 	-- runtime
 	CurrentTarget = nil,
 	CorpseNpc = nil,
@@ -496,6 +502,31 @@ local function npcPoseFor(part)
 	return part.CFrame + part.CFrame.LookVector * Farm.DistanceFromNpc
 end
 
+-- ===================== gya farm camp =====================
+-- Verified spots behind the mall buildings (statue LOS blocked, floor y≈62):
+--   Back of BR → behind ShopsL near the BR heart corner
+--   Back of BL → behind ShopsR near the BL heart corner
+local GYA_CAMPS = {
+	["Back of BR"] = Vector3.new(-500, 64, 165),
+	["Back of BL"] = Vector3.new(-500, 64, 380),
+}
+
+local function gyaCampPos()
+	if Farm.GyaCamp == "My Position" and Farm.GyaCampPos then
+		return Farm.GyaCampPos
+	end
+	return GYA_CAMPS[Farm.GyaCamp] or GYA_CAMPS["Back of BR"]
+end
+
+function Farm.SaveGyaCampHere()
+	local _, hrp = character()
+	if not hrp then return false end
+	Farm.GyaCampPos = hrp.Position
+	Farm.GyaCamp = "My Position"
+	print("[Autofarm] gya camp saved:", hrp.Position)
+	return true
+end
+
 local function findTarget()
 	-- working.lua getNPC priority: enabled Gyakusatsu (lowest HP) → any enabled boss → nearest group NPC
 	local _, hrp = character()
@@ -503,6 +534,28 @@ local function findTarget()
 	local spawns = Workspace:FindFirstChild("NPCSpawns")
 	if not spawns then return nil end
 	local level = playerLevel()
+
+	-- Gya Farm mode: ONLY the statue matters; ignore group/boss toggles
+	if Farm.GyaFarm then
+		local gspawn = spawns:FindFirstChild("GyakusatsuSpawn")
+		if not gspawn then return nil end
+		local lowestHP, lowestModel = math.huge, nil
+		for _, v in ipairs(gspawn:GetChildren()) do
+			if v.Name ~= "Mob" and v:FindFirstChildOfClass("Humanoid") then
+				local h = v.Humanoid.Health
+				if h > 0 and h < lowestHP then
+					lowestHP = h
+					lowestModel = v
+				end
+			end
+		end
+		if lowestModel then return lowestModel end
+		local fallback = gspawn:FindFirstChild("Gyakusatsu")
+		if fallback and fallback:FindFirstChild("Humanoid") and fallback.Humanoid.Health > 0 then
+			return fallback
+		end
+		return nil -- not spawned: caller camps
+	end
 
 	-- 1) Gyakusatsu special (lowest HP among spawn)
 	if Farm.BossEnabled["Gyakusatsu"] and level > (Farm.Boss["Gyakusatsu"] or 9999) then
@@ -879,6 +932,20 @@ local function loop()
 		if not target then
 			target = findTarget()
 			Farm.CurrentTarget = target
+		end
+
+		-- Gya Farm: statue not spawned → sit at the camp behind the building
+		if Farm.GyaFarm and not target then
+			local camp = gyaCampPos()
+			if camp and tick() - Farm._gyaCampT > 2.0 then
+				Farm._gyaCampT = tick()
+				local _, myHrp = character()
+				if myHrp and (myHrp.Position - camp).Magnitude > 5 then
+					pcall(teleportTo, camp)
+				end
+			end
+			task.wait(0.2)
+			continue
 		end
 
 		if target then

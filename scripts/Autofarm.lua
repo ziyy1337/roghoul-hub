@@ -504,12 +504,12 @@ local function npcPoseFor(part)
 end
 
 -- ===================== gya farm camp =====================
--- Verified spots behind the mall buildings (statue LOS blocked, floor y≈62):
+-- Verified spots behind the mall buildings (statue LOS blocked, floor y≈61):
 --   Back of BR → behind ShopsL near the BR heart corner
---   Back of BL → behind ShopsR near the BL heart corner
+--   Back of BL → user-picked spot behind PartsStore (ShopsR), same cover pattern
 local GYA_CAMPS = {
 	["Back of BR"] = Vector3.new(-500, 64, 165),
-	["Back of BL"] = Vector3.new(-500, 64, 380),
+	["Back of BL"] = Vector3.new(-396.5, 64, 352.4),
 }
 
 local function gyaCampPos()

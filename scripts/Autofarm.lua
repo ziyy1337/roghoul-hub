@@ -69,6 +69,7 @@ local Farm = {
 	GyaFarm = false,
 	GyaCamp = "Back of BR",
 	GyaCampPos = nil, -- set by SaveGyaCampHere
+	GyaCamLock = true, -- lock camera on BR/BL axis so one shot threads both hearts
 	_gyaCampT = 0,
 
 	-- runtime
@@ -527,6 +528,54 @@ function Farm.SaveGyaCampHere()
 	return true
 end
 
+-- ===================== gya hearts axis camera =====================
+-- BR and BL hearts are nearly collinear (axis ≈ +Z). A camera parked on
+-- that axis line looking along it sends one straight shot through BOTH
+-- heart centers — verified live: extended ray lands inside BL's part box.
+local GYA_HEARTS = {
+	BR = Vector3.new(-530.50, 67.98, 206.58),
+	BL = Vector3.new(-519.59, 67.38, 341.97),
+}
+
+local function gyaBody()
+	return Workspace:FindFirstChild("Gyakusatsu")
+end
+
+local function gyaHeartPositions()
+	local body = gyaBody()
+	local br, bl = GYA_HEARTS.BR, GYA_HEARTS.BL
+	if body then
+		local a = body:FindFirstChild("BR") and body.BR:FindFirstChild("Spawn")
+		local b = body:FindFirstChild("BL") and body.BL:FindFirstChild("Spawn")
+		if a then br = a.Position end
+		if b then bl = b.Position end
+	end
+	return br, bl
+end
+
+-- camera CFrame on the axis, 55 studs north of BR, aimed straight down the line
+local function gyaAxisCam()
+	local br, bl = gyaHeartPositions()
+	local axis = (bl - br).Unit
+	local camPos = br - axis * 55 + Vector3.new(0, 2, 0)
+	return CFrame.lookAt(camPos, camPos + axis), camPos, axis, br, bl
+end
+
+local gyaCamConn = nil
+local function setGyaCamLoop(on)
+	if on and not gyaCamConn then
+		gyaCamConn = RunService.RenderStepped:Connect(function()
+			if not (Farm.Enabled and Farm.GyaFarm and Farm.GyaCamLock and gyaBody()) then return end
+			local cf = gyaAxisCam()
+			local cam = Workspace.CurrentCamera
+			if cam then cam.CFrame = cf end
+		end)
+	elseif not on and gyaCamConn then
+		gyaCamConn:Disconnect()
+		gyaCamConn = nil
+	end
+end
+
 local function findTarget()
 	-- working.lua getNPC priority: enabled Gyakusatsu (lowest HP) → any enabled boss → nearest group NPC
 	local _, hrp = character()
@@ -818,6 +867,7 @@ local function stop()
 	Farm.CurrentTarget = nil
 	Farm.CorpseNpc = nil
 	setNoclip(false)
+	setGyaCamLoop(false)
 	pcall(Farm.StopTrain)
 	if Farm._task then
 		task.cancel(Farm._task)
@@ -878,6 +928,29 @@ local function loop()
 		pcall(ensureArata)
 		pcall(ensureWeaponMode)
 		pcall(ensureRangeAfterEquip)
+
+		-- Gya Farm: event body present → stand on the BR/BL axis and
+		-- shoot straight down the line so ONE shot threads BOTH hearts
+		if Farm.GyaFarm and gyaBody() then
+			local cf, camPos = gyaAxisCam()
+			if tick() - Farm._gyaCampT > 1.0 then
+				Farm._gyaCampT = tick()
+				local _, myHrp = character()
+				local stand = Vector3.new(camPos.X, camPos.Y - 2, camPos.Z)
+				if myHrp and (myHrp.Position - stand).Magnitude > 4 then
+					pcall(teleportTo, stand)
+				end
+			end
+			if canAct() and tick() - Farm.LastAttack >= Farm.FarmDelay then
+				local br = gyaHeartPositions()
+				local hit = CFrame.new(br) * (cf - cf.Position)
+				pcall(pressKey, "Mouse1", hit)
+				Farm.LastAttack = tick()
+				Farm.Stats.attacks += 1
+			end
+			task.wait(0.05)
+			continue
+		end
 
 		if Farm.ReputationFarm or Farm.ReputationCashout then
 			local did, ret = pcall(reputationTick)
@@ -1006,6 +1079,7 @@ function Farm.Start()
 	Farm.FetchStages()
 	getAuthKey()
 	setNoclip(Farm.Noclip)
+	setGyaCamLoop(true)
 	-- installHitSpoof() -- disabled: game __index crashed
 Farm._rangedOn = false
 	appliedMode = nil

@@ -564,6 +564,12 @@ farmGya:new_button({
 		end
 	end,
 })
+farmGya:new_toggle({
+	name = "Lock Camera on Hearts (BR/BL)",
+	flag = "farm_gya_camlock",
+	state = true,
+	callback = function(s) Farm.GyaCamLock = s end,
+})
 farmGya:new_seperator({ name = "Waits at camp (statue can't see you) until it spawns" })
 
 local farmTarget = farm:new_section({ name = "Targets", size = "Fill", side = "right" })
